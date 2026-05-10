@@ -1,0 +1,161 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!1 &4732065471243760119
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 8159579222067062723}
+  - component: {fileID: 3144512136923250218}
+  - component: {fileID: 4985166102190960753}
+  - component: {fileID: 8940910461507143863}
+  - component: {fileID: 3015540755934547365}
+  - component: {fileID: 8398966483044880658}
+  - component: {fileID: 2712768337160101210}
+  - component: {fileID: 731150124743169213}
+  m_Layer: 0
+  m_Name: NetworkServices
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &8159579222067062723
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4732065471243760119}
+  serializedVersion: 2
+  m_LocalRotation: {x: 0, y: 0, z: 0, w: 1}
+  m_LocalPosition: {x: 0, y: 0, z: 0}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 0}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
+--- !u!114 &3144512136923250218
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4732065471243760119}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 9b91ecbcc199f4492b9a91e820070131, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Mirror::Mirror.NetworkIdentity
+  sceneId: 0
+  _assetId: 23379213
+  serverOnly: 0
+  visibility: 0
+  hasSpawned: 0
+--- !u!114 &4985166102190960753
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4732065471243760119}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: bd5f5b72acd1240d785f24a0245759e5, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::RRaM.Core.Match.MatchManager
+  syncDirection: 0
+  syncMode: 0
+  syncInterval: 0
+  State: 0
+  StarterTurnsElapsed: 0
+--- !u!114 &8940910461507143863
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4732065471243760119}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 53b867c0ec0de4ca5b470b3f6aafadd3, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::RRaM.Core.Turns.TurnManager
+  syncDirection: 0
+  syncMode: 0
+  syncInterval: 0
+  CurrentPlayerSlot: -1
+  TurnNumber: 0
+  CurrentPhase: 0
+  MoveBonus: 0
+  HasMovedThisTurn: 0
+  CompletedTurnCount: 0
+--- !u!114 &3015540755934547365
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4732065471243760119}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: abef0028d576a4e6e992925e75f8085a, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::RRaM.Core.Dice.DiceManager
+  syncDirection: 0
+  syncMode: 0
+  syncInterval: 0
+  DieA: 0
+  DieB: 0
+  Total: 0
+  HasRolled: 0
+  LastRollPlayerSlot: -1
+--- !u!114 &8398966483044880658
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4732065471243760119}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: d944eb99a07264abe9953c7b0cc14958, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::RRaM.Core.Characters.CharacterManager
+  syncDirection: 0
+  syncMode: 0
+  syncInterval: 0
+--- !u!114 &2712768337160101210
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4732065471243760119}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 869329939a7764468b7baafaf52a8c97, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::RRaM.Core.Cards.CardManager
+  syncDirection: 0
+  syncMode: 0
+  syncInterval: 0
+--- !u!114 &731150124743169213
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 4732065471243760119}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 0fe5826483c03457eab89444c56f4a7d, type: 3}
+  m_Name: 
+  m_EditorClassIdentifier: Assembly-CSharp::RRaM.Core.Dwarfs.DwarfManager
+  syncDirection: 0
+  syncMode: 0
+  syncInterval: 0
+  DwarfsSpawned: 0

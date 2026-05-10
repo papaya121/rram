@@ -1,0 +1,23 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e4a2a919ef9f44ae8551f797d9bca8d6, type: 3}
+  m_Name: CleanedRamHideCard
+  m_EditorClassIdentifier: Assembly-CSharp::RRaM.Core.Cards.RulebookCard
+  cardName: "<b>\u041e\u0447\u0438\u0449\u0435\u043d\u043d\u0430\u044f \u0448\u043a\u0443\u0440\u0430 \u0431\u0430\u0440\u0430\u043d\u0430</b>\n\u041f\u0440\u0438\u043c\u0435\u043d\u0438\u043c\u043e \u043a \u0447\u0435\u0440\u0442\u0435\u0436\u0430\u043c \u0438 \u0440\u0435\u0446\u0435\u043f\u0442\u0430\u043c."
+  cardImage: {fileID: 21300000, guid: e81901635e27b42a7bf4ed1f2d452273, type: 3}
+  isConsumable: 1
+  cardId: "CleanedRamHideCard"
+  handSlotMode: 0
+  fixedHandCharacter: 0
+  displayName: "\u041e\u0447\u0438\u0449\u0435\u043d\u043d\u0430\u044f \u0448\u043a\u0443\u0440\u0430 \u0431\u0430\u0440\u0430\u043d\u0430"
+  implementationStatus: 0
+  futureHook: "TODO: \u0438\u0441\u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u044c \u043a\u0430\u043a \u043c\u0430\u0442\u0435\u0440\u0438\u0430\u043b \u0432 \u0440\u0435\u0446\u0435\u043f\u0442\u0430\u0445 \u0438 \u0447\u0435\u0440\u0442\u0435\u0436\u0430\u0445."

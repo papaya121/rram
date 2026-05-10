@@ -1,0 +1,30 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 4af5de6b81f4242a5a9232f06080c705, type: 3}
+  m_Name: TeleportationBeadsCard
+  m_EditorClassIdentifier: Assembly-CSharp::RRaM.Core.Cards.TeleportationBeadsCard
+  cardName: "<b>\u0411\u0443\u0441\u044B \u0442\u0435\u043B\u0435\u043F\u043E\u0440\u0442\u0430\u0446\u0438\u0438.</b>
+    \u0411\u0430\u0437\u043E\u0432\u0430\u044F \u043A\u0430\u0440\u0442\u0430 \u0434\u043B\u044F
+    \u043B\u044E\u0431\u043E\u0433\u043E \u043A\u043B\u0430\u0441\u0441\u0430. (\u043E\u0434\u043D\u043E\u0440\u0430\u0437\u043E\u0432\u043E)
+    \u0415\u0441\u043B\u0438 \u0432\u044B \u043A\u0438\u043D\u0438\u0442\u0435 \u043A\u0443\u0431\u0438\u043A
+    1 \u0440\u0430\u0437 \u043D\u0435 \u043C\u0435\u043D\u0435\u0435 2-\u0445 \u0442\u043E
+    \u0432\u044B \u0442\u0435\u043B\u0435\u043F\u043E\u0440\u0442\u0438\u0440\u0443\u0435\u0442\u0435\u0441\u044C
+    \u043D\u0430 \u043A\u043B\u0435\u0442\u043A\u0443 \u0433\u0434\u0435 \u0432\u044B
+    \u043F\u043E\u044F\u0432\u0438\u043B\u0438\u0441\u044C \u0432 \u043D\u0430\u0447\u0430\u043B\u0435
+    \u0432\u0441\u0435\u0439 \u0441\u0432\u043E\u0435\u0439 \u043F\u0430\u0440\u0442\u0438\u0438.
+    \u0414\u043B\u044F \u0437\u0430\u0440\u044F\u0434\u0430 \u0431\u0443\u0441 \u0442\u0435\u043B\u0435\u043F\u043E\u0440\u0442\u0430\u0446\u0438\u0438,
+    \u043E\u0431\u0440\u0430\u0442\u0438\u0442\u0435\u0441\u044C \u043A \u0448\u0430\u043C\u0430\u043D\u0443."
+  cardImage: {fileID: 21300000, guid: e7c43c6b6048745db90bf51201d85dbc, type: 3}
+  isConsumable: 1
+  cardId: TeleportationBeadsCard
+  handSlotMode: 0
+  fixedHandCharacter: 0

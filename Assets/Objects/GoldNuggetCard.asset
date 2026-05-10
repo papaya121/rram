@@ -1,0 +1,23 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: e4a2a919ef9f44ae8551f797d9bca8d6, type: 3}
+  m_Name: GoldNuggetCard
+  m_EditorClassIdentifier: Assembly-CSharp::RRaM.Core.Cards.RulebookCard
+  cardName: "<b>\u0417\u043e\u043b\u043e\u0442\u043e\u0439 \u0441\u0430\u043c\u043e\u0440\u043e\u0434\u043e\u043a</b>\n\u041c\u0430\u0442\u0435\u0440\u0438\u0430\u043b \u0434\u043b\u044f \u0431\u0443\u0434\u0443\u0449\u0438\u0445 \u0443\u043b\u0443\u0447\u0448\u0435\u043d\u0438\u0439 \u0447\u0435\u0440\u0435\u0437 \u043c\u0435\u0448\u043e\u043a \u043f\u043e\u043c\u043e\u0449\u043d\u0438\u043a\u0430 \u043a\u0443\u0437\u043d\u0435\u0446\u0430."
+  cardImage: {fileID: 21300000, guid: b2d0df4c3917e49e59e45eedce2cc88c, type: 3}
+  isConsumable: 1
+  cardId: "GoldNuggetCard"
+  handSlotMode: 0
+  fixedHandCharacter: 0
+  displayName: "\u0417\u043e\u043b\u043e\u0442\u043e\u0439 \u0441\u0430\u043c\u043e\u0440\u043e\u0434\u043e\u043a"
+  implementationStatus: 0
+  futureHook: "TODO: \u043f\u043e\u0434\u043a\u043b\u044e\u0447\u0438\u0442\u044c \u0443\u043b\u0443\u0447\u0448\u0435\u043d\u0438\u0435 \u0437\u043e\u043b\u043e\u0442\u044b\u0445 \u0441\u0430\u043c\u043e\u0440\u043e\u0434\u043a\u043e\u0432 \u0447\u0435\u0440\u0435\u0437 \u043c\u0435\u0448\u043e\u043a."

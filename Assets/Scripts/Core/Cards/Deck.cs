@@ -1,0 +1,106 @@
+using System.Collections.Generic;
+using UnityEngine;
+
+namespace RRaM.Core.Cards
+{
+    public sealed class Deck : MonoBehaviour
+    {
+        public static Deck Instance { get; private set; }
+
+        [SerializeField] private CardInstance cardPrefab;
+        [SerializeField] private Transform drawOrigin;
+        [SerializeField] private Transform cameraWaypoint;
+        [SerializeField] private List<BaseCard> cards = new();
+
+        private readonly Dictionary<string, BaseCard> cardsById = new();
+        private readonly Queue<BaseCard> runtimeDeck = new();
+
+        public CardInstance CardPrefab => cardPrefab;
+        public Transform DrawOrigin => drawOrigin != null ? drawOrigin : transform;
+        public Transform CameraWaypoint => cameraWaypoint;
+        public int RemainingCards => runtimeDeck.Count;
+        public bool HasCards => runtimeDeck.Count > 0;
+
+        private void Awake()
+        {
+            if (Instance != null && Instance != this)
+            {
+                Debug.LogWarning("[Cards] Duplicate deck detected. Destroying the newer instance.", this);
+                Destroy(gameObject);
+                return;
+            }
+
+            Instance = this;
+            RebuildCatalog();
+            ResetRuntimeState();
+        }
+
+        public void ResetRuntimeState()
+        {
+            runtimeDeck.Clear();
+            for (int i = 0; i < cards.Count; i++)
+            {
+                if (cards[i] != null)
+                {
+                    runtimeDeck.Enqueue(cards[i]);
+                }
+            }
+        }
+
+        public BaseCard Draw()
+        {
+            return runtimeDeck.Count > 0 ? runtimeDeck.Dequeue() : null;
+        }
+
+        public bool TryDraw(out BaseCard card)
+        {
+            card = Draw();
+            return card != null;
+        }
+
+        public bool TryResolveCard(string cardId, out BaseCard card)
+        {
+            if (string.IsNullOrWhiteSpace(cardId))
+            {
+                card = null;
+                return false;
+            }
+
+            return cardsById.TryGetValue(cardId.Trim(), out card);
+        }
+
+        private void RebuildCatalog()
+        {
+            cardsById.Clear();
+            for (int i = 0; i < cards.Count; i++)
+            {
+                BaseCard card = cards[i];
+                if (card == null)
+                {
+                    continue;
+                }
+
+                string cardId = card.CardId;
+                if (cardsById.TryGetValue(cardId, out BaseCard existingCard))
+                {
+                    if (existingCard != card)
+                    {
+                        Debug.LogWarning($"[Cards] Duplicate card id '{cardId}' on deck '{name}'.", this);
+                    }
+
+                    continue;
+                }
+
+                cardsById[cardId] = card;
+            }
+        }
+
+        private void OnDestroy()
+        {
+            if (Instance == this)
+            {
+                Instance = null;
+            }
+        }
+    }
+}
