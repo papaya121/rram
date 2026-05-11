@@ -284,7 +284,7 @@ namespace RRaM.Core.CameraControl
                 : TurnManager.Instance;
             if (turnManager != null)
             {
-                int activeSlot = turnManager.IsSetupPhase ? turnManager.ActiveActionPlayerSlot : turnManager.CurrentPlayerSlot;
+                int activeSlot = turnManager.CurrentPlayerSlot;
                 if (activeSlot >= 0)
                 {
                     return activeSlot;

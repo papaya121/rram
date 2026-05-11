@@ -1,5 +1,6 @@
 using System.Globalization;
 using RRaM.Core.Characters;
+using UnityEngine;
 
 namespace RRaM.Core.Board
 {
@@ -111,6 +112,52 @@ namespace RRaM.Core.Board
                 ? GetCharacterShortLabel(node.StarterCharacterType)
                 : GetCharacterDisplayName(node.StarterCharacterType);
             return true;
+        }
+    }
+
+    public static class BoardNodeVisualUtility
+    {
+        public static readonly Color DefaultNodeColor = new(0.9f, 0.88f, 0.79f);
+        public static readonly Color StarterNodeColor = new(0.95f, 0.79f, 0.29f);
+        public static readonly Color GreenDeckNodeColor = new(0.32f, 0.74f, 0.35f);
+        public static readonly Color RedDeckNodeColor = new(0.82f, 0.26f, 0.22f);
+        public static readonly Color TeleportNodeColor = new(0.66f, 0.37f, 0.86f);
+        public static readonly Color CustomNodeColor = new(0.32f, 0.7f, 0.84f);
+
+        public static bool TryGetSpecialNodeColor(BoardNodeKind nodeKind, out Color color)
+        {
+            color = nodeKind switch
+            {
+                BoardNodeKind.GreenDeck => GreenDeckNodeColor,
+                BoardNodeKind.RedDeck => RedDeckNodeColor,
+                BoardNodeKind.Teleport => TeleportNodeColor,
+                BoardNodeKind.Custom => CustomNodeColor,
+                _ => default
+            };
+
+            return nodeKind != BoardNodeKind.Normal;
+        }
+
+        public static Color GetAuthoredNodeColor(BoardNode node)
+        {
+            if (node == null)
+            {
+                return DefaultNodeColor;
+            }
+
+            return GetAuthoredNodeColor(node.NodeKind, node.IsStarterNode);
+        }
+
+        public static Color GetAuthoredNodeColor(BoardNodeKind nodeKind, bool isStarterNode)
+        {
+            if (isStarterNode)
+            {
+                return StarterNodeColor;
+            }
+
+            return TryGetSpecialNodeColor(nodeKind, out Color color)
+                ? color
+                : DefaultNodeColor;
         }
     }
 }

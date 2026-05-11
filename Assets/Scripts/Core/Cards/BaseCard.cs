@@ -23,6 +23,7 @@ namespace RRaM.Core.Cards
         public CardHandSlotMode HandSlotMode => handSlotMode;
         public CharacterType FixedHandCharacter => fixedHandCharacter;
         public virtual bool IsPlayable => true;
+        public virtual int MinimumDieValue => 1;
         public virtual string DisplayName => ResolveDisplayName(cardName, name);
 
         public virtual int ResolveHandSlotIndex(CardContext context)

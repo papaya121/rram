@@ -74,6 +74,23 @@ namespace RRaM.Core.Cards
             ApplyVisualRestPose();
         }
 
+        public void CancelRootAnimation()
+        {
+            if (activeRootRoutine == null)
+            {
+                return;
+            }
+
+            StopCoroutine(activeRootRoutine);
+            activeRootRoutine = null;
+        }
+
+        public IEnumerator PlayLocalPoseAnimation(Vector3 targetLocalPosition, Quaternion targetLocalRotation, Vector3 targetLocalScale, float duration)
+        {
+            CancelRootAnimation();
+            yield return AnimateRootPose(targetLocalPosition, targetLocalRotation, targetLocalScale, duration);
+        }
+
         public IEnumerator PlayDrawAnimation(Transform target)
         {
             if (target == null)

@@ -251,19 +251,7 @@ namespace RRaM.Core.Board
 
         private static Color ResolveAuthoredNodeColor(BoardNode node)
         {
-            if (node.IsStarterNode)
-            {
-                return new Color(0.95f, 0.79f, 0.29f);
-            }
-
-            return node.NodeKind switch
-            {
-                BoardNodeKind.GreenDeck => new Color(0.32f, 0.74f, 0.35f),
-                BoardNodeKind.RedDeck => new Color(0.82f, 0.26f, 0.22f),
-                BoardNodeKind.Teleport => new Color(0.66f, 0.37f, 0.86f),
-                BoardNodeKind.Custom => new Color(0.32f, 0.7f, 0.84f),
-                _ => new Color(0.9f, 0.88f, 0.79f)
-            };
+            return BoardNodeVisualUtility.GetAuthoredNodeColor(node);
         }
 
         private void OnDestroy()

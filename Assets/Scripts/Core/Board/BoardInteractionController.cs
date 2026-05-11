@@ -214,11 +214,33 @@ namespace RRaM.Core.Board
 
             UpdateMovementDebugState(movementState);
             BoardNodeHighlightState movementStateForTarget = ResolveMovementHighlightState(selectedCharacter.CurrentNodeId, target.NodeId, movementBudget, out int usedSteps);
-            bool canMoveToTarget = movementStateForTarget == BoardNodeHighlightState.Valid || movementStateForTarget == BoardNodeHighlightState.Extended;
-            hoveredTarget.SetHighlightState(movementStateForTarget);
+            bool hasOwnedCharacterAtTarget = TryGetOwnedCharacterAtNode(target.NodeId, out CharacterSnapshot ownedCharacterAtTarget);
+            bool occupiedByOtherOwnedCharacter = hasOwnedCharacterAtTarget && ownedCharacterAtTarget.NetId != selectedCharacter.NetId;
+            bool canSelectCharacterAtTarget = TryGetSelectableCharacterAtNode(target.NodeId, out CharacterSnapshot selectableCharacterAtTarget);
+            bool canMoveToTarget = !occupiedByOtherOwnedCharacter &&
+                                   (movementStateForTarget == BoardNodeHighlightState.Valid || movementStateForTarget == BoardNodeHighlightState.Extended);
+            hoveredTarget.SetHighlightState(
+                canSelectCharacterAtTarget
+                    ? BoardNodeHighlightState.Valid
+                    : occupiedByOtherOwnedCharacter
+                        ? BoardNodeHighlightState.Invalid
+                        : movementStateForTarget);
 
             if (mouse.leftButton.wasPressedThisFrame)
             {
+                if (canSelectCharacterAtTarget)
+                {
+                    LogDebug($"Click on node '{target.NodeId}' selects character '{selectableCharacterAtTarget.DisplayName}' instead of moving onto an occupied allied node.");
+                    LocalPlayerController.Instance?.SelectCharacterAtNode(target.NodeId, selectableCharacterAtTarget.NetId, selectableCharacterAtTarget);
+                    return;
+                }
+
+                if (occupiedByOtherOwnedCharacter)
+                {
+                    LogDebug($"Click on node '{target.NodeId}' ignored because it is occupied by allied character '{ownedCharacterAtTarget.DisplayName}' and selection is locked.");
+                    return;
+                }
+
                 LogDebug($"Click on node '{target.NodeId}'. SelectedCharacter='{selectedCharacter.DisplayName}', From='{selectedCharacter.CurrentNodeId}', Steps={usedSteps}, PrimaryBudget={movementBudget.Primary}, TotalBudget={movementBudget.Total}, CanMove={canMoveToTarget}");
                 if (canMoveToTarget)
                 {
@@ -290,10 +312,10 @@ namespace RRaM.Core.Board
 
             int localSlot = local.Player.PlayerSlot;
             bool movementPhaseReady =
-                diceManager.HasRolled ||
-                turnManager.CurrentPhase == TurnPhase.WaitingForMove ||
-                turnManager.GetRemainingMoveBudget() > 0 ||
-                turnManager.GetRemainingDieActions() > 0;
+                turnManager.CanPlayerMove(localSlot) &&
+                diceManager.HasRolled &&
+                turnManager.CurrentPhase == TurnPhase.WaitingForMove &&
+                turnManager.GetRemainingMoveBudget() > 0;
             if (!movementPhaseReady)
             {
                 movementState =
@@ -313,6 +335,13 @@ namespace RRaM.Core.Board
             {
                 movementState =
                     $"Movement blocked. SelectedCharacterNetId={local.Player.SelectedCharacterNetId}, ResolvedCharacterNetId={selectedCharacter.NetId}, CurrentNodeId='{selectedCharacter.CurrentNodeId}'";
+                return false;
+            }
+
+            if (!turnManager.CanPlayerSelectCharacter(localSlot, selectedCharacter.NetId))
+            {
+                movementState =
+                    $"Movement blocked. Selected character '{selectedCharacter.DisplayName}' is not available for the active action. ActiveCharacterNetId={turnManager.ActiveCharacterNetId}, SelectedCharacterNetId={selectedCharacter.NetId}, Phase={turnManager.CurrentPhase}";
                 return false;
             }
 
@@ -357,7 +386,7 @@ namespace RRaM.Core.Board
             return TryGetSelectableCharacterAtNode(nodeId, out _);
         }
 
-        private bool TryGetSelectableCharacterAtNode(string nodeId, out CharacterSnapshot characterAtNode)
+        private static bool TryGetOwnedCharacterAtNode(string nodeId, out CharacterSnapshot characterAtNode)
         {
             characterAtNode = default;
             LocalPlayerController local = LocalPlayerController.Instance;
@@ -367,7 +396,21 @@ namespace RRaM.Core.Board
             }
 
             characterAtNode = local.Player.Characters.FirstOrDefault(character => character.CurrentNodeId == nodeId);
-            return characterAtNode.NetId != 0 && local.EffectiveSelectedCharacterNetId != characterAtNode.NetId;
+            return characterAtNode.NetId != 0;
+        }
+
+        private bool TryGetSelectableCharacterAtNode(string nodeId, out CharacterSnapshot characterAtNode)
+        {
+            LocalPlayerController local = LocalPlayerController.Instance;
+            characterAtNode = default;
+            if (local?.Player == null || !TryGetOwnedCharacterAtNode(nodeId, out characterAtNode))
+            {
+                return false;
+            }
+
+            return local.EffectiveSelectedCharacterNetId != characterAtNode.NetId &&
+                   (TurnManager.Instance == null ||
+                    TurnManager.Instance.CanPlayerSelectCharacter(local.Player.PlayerSlot, characterAtNode.NetId));
         }
 
         private static bool TryResolveSelectedCharacter(LocalPlayerController local, out CharacterSnapshot selectedCharacter, out string source)

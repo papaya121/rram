@@ -38,7 +38,9 @@ namespace RRaM.Core.UI
         private const string PortPrefKey = "RRaM.Network.Port";
         private const string FixedRemoteAddress = "45.144.176.193";
         private const string ChatInputControlName = "PrototypeHud.ChatInput";
+        private const float RollDicePromptPendingTimeout = 2f;
 
+        [SerializeField] private GameObject rollDicePromptObject;
         private ConnectionTarget connectionTarget = ConnectionTarget.RemoteServer;
         private string port = "7777";
         private string chatInput = string.Empty;
@@ -54,6 +56,9 @@ namespace RRaM.Core.UI
         private int cachedCharacterCount;
         private int cachedDwarfCount;
         private int lastRenderedChatCount;
+        private bool isDebugVisible;
+        private bool rollDiceRequestPending;
+        private float rollDiceRequestPendingUntil;
 
         private void Start()
         {
@@ -63,6 +68,13 @@ namespace RRaM.Core.UI
             }
 
             port = PlayerPrefs.GetString(PortPrefKey, port);
+            CardSelectionPanel.EnsureInitialized();
+            UpdateRollDicePromptVisibility();
+        }
+
+        private void Update()
+        {
+            UpdateRollDicePromptVisibility();
         }
 
         private void OnGUI()
@@ -90,12 +102,22 @@ namespace RRaM.Core.UI
             DrawLobbyBlock();
             DrawGameplayBlock();
             DrawChatBlock();
-            DrawDebugBlock();
+            DrawGameplayInfoToggle();
+            DrawGameplayInfoBlock();
             GUILayout.EndVertical();
             GUILayout.EndScrollView();
             GUILayout.EndArea();
             GUI.matrix = previousMatrix;
             DrawCenterDiceOverlay();
+        }
+
+        private void DrawGameplayInfoToggle()
+        {
+            string buttonText = isDebugVisible ? "Скрыть debug" : "Показать debug";
+            if (DrawCenteredButton(buttonText))
+            {
+                isDebugVisible = !isDebugVisible;
+            }
         }
 
         private static float CalculateGuiScale()
@@ -176,6 +198,7 @@ namespace RRaM.Core.UI
             DrawWrappedLabel($"Сервер: {(NetworkServer.active ? "включен" : "выключен")}");
             DrawWrappedLabel($"Клиент: {(NetworkClient.active ? "подключен" : "не подключен")}");
             DrawWrappedLabel($"Точка: {ResolveSelectedAddress()}:{ResolveSelectedPort()}");
+
             if (DrawCenteredButton("Остановить"))
             {
                 if (NetworkServer.active && NetworkClient.isConnected)
@@ -205,13 +228,6 @@ namespace RRaM.Core.UI
             DrawWrappedLabel("Лобби");
             DrawWrappedLabel($"Состояние: {DescribeMatchState(matchManager.State)}");
 
-            int localSlot = LocalPlayerController.Instance?.Player != null ? LocalPlayerController.Instance.Player.PlayerSlot : -1;
-            for (int i = 0; i < cachedPlayers.Length; i++)
-            {
-                string ownerLabel = cachedPlayers[i].PlayerSlot == localSlot ? "Вы" : "Игрок";
-                DrawWrappedLabel($"{ownerLabel} [{cachedPlayers[i].PlayerSlot + 1}]: {cachedPlayers[i].DisplayName}, подключен");
-            }
-
             if (matchManager.State == MatchState.Lobby)
             {
                 if (cachedPlayers.Length < 2)
@@ -227,6 +243,53 @@ namespace RRaM.Core.UI
 
         private void DrawGameplayBlock()
         {
+            MatchManager matchManager = MatchManager.Instance;
+            TurnManager turnManager = TurnManager.Instance;
+            DiceManager diceManager = DiceManager.Instance;
+            LocalPlayerController local = LocalPlayerController.Instance;
+            if (matchManager == null || turnManager == null || diceManager == null || local?.Player == null)
+            {
+                return;
+            }
+
+            int localPlayerSlot = local.Player.PlayerSlot;
+            bool canActNow = turnManager.CanPlayerAct(localPlayerSlot);
+            if (canActNow)
+            {
+                GUILayout.Space(8f);
+                DrawCharacterSelection(local, canActNow);
+                DrawCardList(local, canActNow);
+                DrawBoardMovementHint(local, diceManager, turnManager);
+
+                GUILayout.Space(10f);
+                GUILayout.BeginHorizontal();
+                GUILayout.FlexibleSpace();
+                GUI.enabled = turnManager.CanPlayerRoll(localPlayerSlot);
+                if (GUILayout.Button("Бросить кубики", wrappedButtonStyle, GUILayout.Width(GetSplitButtonWidth()), GUILayout.MinHeight(34f)))
+                {
+                    RequestRollDice();
+                }
+
+                GUILayout.Space(6f);
+                GUI.enabled = turnManager.CanPlayerEndTurn(localPlayerSlot);
+                if (GUILayout.Button("Завершить ход", wrappedButtonStyle, GUILayout.Width(GetSplitButtonWidth()), GUILayout.MinHeight(34f)))
+                {
+                    local.EndTurn();
+                }
+                GUI.enabled = true;
+                GUILayout.FlexibleSpace();
+                GUILayout.EndHorizontal();
+            }
+
+        }
+
+        private void DrawGameplayInfoBlock()
+        {
+            if (!isDebugVisible)
+            {
+                return;
+            }
+
             MatchManager matchManager = MatchManager.Instance;
             TurnManager turnManager = TurnManager.Instance;
             DiceManager diceManager = DiceManager.Instance;
@@ -255,7 +318,13 @@ namespace RRaM.Core.UI
             {
                 DrawWrappedLabel("Это общий результат матча. Его видят оба игрока.");
             }
+
             DrawWrappedLabel($"Неиспользованных действий кубиков: {turnManager.GetRemainingDieActions()}");
+            if (turnManager.GetRemainingCardTransfers() > 0)
+            {
+                DrawWrappedLabel($"Оставшихся передач карт: {turnManager.GetRemainingCardTransfers()}");
+            }
+
             DrawWrappedLabel($"Бонус к перемещению: {turnManager.MoveBonus}");
             if (diceManager.HasRolled)
             {
@@ -265,32 +334,25 @@ namespace RRaM.Core.UI
             if (!canActNow)
             {
                 GUILayout.Space(6f);
-                DrawWrappedLabel("Ваши действия станут доступны, когда освободится активное действие или ход перейдет к вам.");
+                DrawWrappedLabel("Ваши действия станут доступны, когда ход перейдет к вам.");
+            }
+
+            DrawConnectedPlayersBlock();
+            DrawDebugBlock();
+        }
+
+        public void RequestRollDice()
+        {
+            LocalPlayerController local = LocalPlayerController.Instance;
+            if (!CanLocalPlayerRollDice(local))
+            {
                 return;
             }
 
-            DrawCharacterSelection(local, canActNow);
-            DrawCardList(local, canActNow);
-            DrawBoardMovementHint(local, diceManager, turnManager);
-
-            GUILayout.Space(10f);
-            GUILayout.BeginHorizontal();
-            GUILayout.FlexibleSpace();
-            GUI.enabled = turnManager.CanPlayerRoll(localPlayerSlot);
-            if (GUILayout.Button("Бросить кубики", wrappedButtonStyle, GUILayout.Width(GetSplitButtonWidth()), GUILayout.MinHeight(34f)))
-            {
-                local.RollDice();
-            }
-
-            GUILayout.Space(6f);
-            GUI.enabled = turnManager.CanPlayerEndTurn(localPlayerSlot);
-            if (GUILayout.Button("Завершить ход", wrappedButtonStyle, GUILayout.Width(GetSplitButtonWidth()), GUILayout.MinHeight(34f)))
-            {
-                local.EndTurn();
-            }
-            GUI.enabled = true;
-            GUILayout.FlexibleSpace();
-            GUILayout.EndHorizontal();
+            local.RollDice();
+            rollDiceRequestPending = true;
+            rollDiceRequestPendingUntil = Time.unscaledTime + RollDicePromptPendingTimeout;
+            UpdateRollDicePromptVisibility();
         }
 
         private void DrawCharacterSelection(LocalPlayerController local, bool isMyTurn)
@@ -307,10 +369,12 @@ namespace RRaM.Core.UI
                 DrawWrappedLabel("Персонажи еще синхронизируются...");
             }
 
-            GUI.enabled = isMyTurn;
             for (int i = 0; i < ownedCharacters.Count; i++)
             {
                 CharacterSnapshot character = ownedCharacters[i];
+                GUI.enabled = isMyTurn &&
+                              (TurnManager.Instance == null ||
+                               TurnManager.Instance.CanPlayerSelectCharacter(local.Player.PlayerSlot, character.NetId));
                 bool isSelected = local.Player.SelectedCharacterNetId == character.NetId;
                 string nodeLabel = BoardNodeDisplayUtility.GetDisplayName(character.CurrentNodeId);
                 string label = isSelected
@@ -382,8 +446,7 @@ namespace RRaM.Core.UI
         {
             GUILayout.Space(4f);
             DrawWrappedLabel("Ваши карты");
-            bool canSpendDieAction = TurnManager.Instance != null && TurnManager.Instance.CanPlayerSpendDieAction(local.Player.PlayerSlot);
-            GUI.enabled = isMyTurn && canSpendDieAction;
+            GUI.enabled = CanDrawCard(local, isMyTurn);
             if (DrawCenteredButton("Взять карту из колоды"))
             {
                 local.DrawCard();
@@ -424,6 +487,36 @@ namespace RRaM.Core.UI
                 {
                     local.UseCard(card.NetId);
                 }
+
+                if (CanTransferCard(local, isMyTurn, card))
+                {
+                    DrawCardTransferTargets(local, card);
+                }
+            }
+
+            GUI.enabled = true;
+        }
+
+        private void DrawCardTransferTargets(LocalPlayerController local, CardSnapshot card)
+        {
+            uint sourceCharacterNetId = ResolveActionCharacterNetId(local);
+            if (sourceCharacterNetId == 0)
+            {
+                return;
+            }
+
+            List<CharacterSnapshot> targets = local.Player.Characters
+                .Where(character => character.NetId != 0 && character.NetId != sourceCharacterNetId)
+                .OrderBy(character => character.CharacterType)
+                .ToList();
+            for (int i = 0; i < targets.Count; i++)
+            {
+                CharacterSnapshot target = targets[i];
+                GUI.enabled = true;
+                if (DrawCenteredButton($"Передать -> {DescribeCharacterType(target.CharacterType)}"))
+                {
+                    local.TransferCard(card.NetId, target.NetId);
+                }
             }
 
             GUI.enabled = true;
@@ -431,7 +524,9 @@ namespace RRaM.Core.UI
 
         private void DrawBoardMovementHint(LocalPlayerController local, DiceManager diceManager, TurnManager turnManager)
         {
-            if (Board.BoardGraph.Instance == null || local.Player.SelectedCharacterNetId == 0 || diceManager.Total <= 0)
+            if (Board.BoardGraph.Instance == null ||
+                local.Player.SelectedCharacterNetId == 0 ||
+                diceManager.Total <= 0)
             {
                 return;
             }
@@ -464,8 +559,28 @@ namespace RRaM.Core.UI
             DrawWrappedLabel($"Match State: {MatchManager.Instance?.State}");
             DrawWrappedLabel($"Starter Turns: {MatchManager.Instance?.StarterTurnsElapsed ?? 0}");
             DrawWrappedLabel($"Dwarfs Spawned: {Dwarfs.DwarfManager.Instance != null && Dwarfs.DwarfManager.Instance.DwarfsSpawned}");
+            DrawWrappedLabel($"Dwarf Turns Resolved: {Dwarfs.DwarfManager.Instance?.DwarfTurnsResolved ?? 0}");
             DrawWrappedLabel($"Spawned Characters: {cachedCharacterCount}");
             DrawWrappedLabel($"Spawned Dwarfs: {cachedDwarfCount}");
+        }
+
+        private void DrawConnectedPlayersBlock()
+        {
+            GUILayout.Space(8f);
+            DrawWrappedLabel("Подключённые игроки");
+
+            int localSlot = LocalPlayerController.Instance?.Player != null ? LocalPlayerController.Instance.Player.PlayerSlot : -1;
+            if (cachedPlayers.Length == 0)
+            {
+                DrawWrappedLabel("Игроки пока не подключены.");
+                return;
+            }
+
+            for (int i = 0; i < cachedPlayers.Length; i++)
+            {
+                string ownerLabel = cachedPlayers[i].PlayerSlot == localSlot ? "Вы" : "Игрок";
+                DrawWrappedLabel($"{ownerLabel} [{cachedPlayers[i].PlayerSlot + 1}]: {cachedPlayers[i].DisplayName}, подключен");
+            }
         }
 
         private void DrawChatBlock()
@@ -659,16 +774,6 @@ namespace RRaM.Core.UI
                 return "неизвестно";
             }
 
-            if (turnManager.IsSetupPhase)
-            {
-                if (turnManager.ActiveActionPlayerSlot >= 0)
-                {
-                    return $"сейчас действует {DescribePlayer(turnManager.ActiveActionPlayerSlot, localPlayerSlot)}";
-                }
-
-                return "свободный старт: любой игрок с оставшимися ходами может начать действие";
-            }
-
             return DescribePlayer(turnManager.CurrentPlayerSlot, localPlayerSlot);
         }
 
@@ -726,7 +831,7 @@ namespace RRaM.Core.UI
             }
 
             int remainingTurns = turnManager.GetRemainingSetupTurns(0) + turnManager.GetRemainingSetupTurns(1);
-            return $"До выхода дварфов осталось стартовых действий: {remainingTurns}";
+            return $"До выхода дварфов осталось стартовых ходов: {remainingTurns}";
         }
 
         private static string DescribeDice(DiceManager diceManager, int localPlayerSlot)
@@ -779,21 +884,20 @@ namespace RRaM.Core.UI
             int localPlayerSlot = local.Player.PlayerSlot;
             if (!turnManager.CanPlayerAct(localPlayerSlot))
             {
-                return turnManager.IsSetupPhase
-                    ? "Сейчас соперник завершает свое действие. Как только он закончит, вы сможете начать следующий стартовый ход."
-                    : "Сейчас ход соперника. Ждите его действий.";
+                return "Сейчас ход соперника. Ждите его действий.";
             }
 
             return turnManager.CurrentPhase switch
             {
                 TurnPhase.WaitingForRoll => turnManager.IsSetupPhase
-                    ? "Стартовая фаза: выберите персонажа и начните одно из своих 10 действий броском кубиков."
-                    : "Ваш ход: выберите персонажа и бросьте кубики.",
+                    ? "Стартовая фаза: бросьте кубики, затем выберите персонажа для хода."
+                    : "Ваш ход: бросьте кубики, затем выберите персонажа.",
                 TurnPhase.WaitingForMove when local.Player.SelectedCharacterNetId == 0 => "Сначала выберите персонажа.",
                 TurnPhase.WaitingForMove when !diceManager.HasRolled => "Сначала бросьте кубики.",
-                TurnPhase.WaitingForMove => "Можно переместить выбранного персонажа один раз. Зелёный узел оставляет одно действие кубика, жёлтый тратит оба, красный недоступен.",
+                TurnPhase.WaitingForMove when turnManager.HasMovedThisTurn && turnManager.GetRemainingMoveBudget() > 0 => "Можно продолжать движение только тем персонажем, который уже начал ходить, либо завершить ход.",
+                TurnPhase.WaitingForMove => "Можно действовать выбранным персонажем: перемещаться, брать карту, использовать карту или передавать карты.",
                 TurnPhase.WaitingForEndTurn => turnManager.IsSetupPhase
-                    ? "Стартовое действие завершено. Можно закончить его и сохранить оставшиеся действия на потом."
+                    ? "Стартовый ход завершен. Можно закончить ход."
                     : "Ваш ход: перемещение завершено, можно завершать ход.",
                 _ => "Следуйте текущей фазе хода."
             };
@@ -807,7 +911,7 @@ namespace RRaM.Core.UI
             }
 
             int opponentSlot = localPlayerSlot == 0 ? 1 : 0;
-            return $"Стартовые действия: у вас {turnManager.GetRemainingSetupTurns(localPlayerSlot)}, у соперника {turnManager.GetRemainingSetupTurns(opponentSlot)}.";
+            return $"Стартовые ходы: у вас {turnManager.GetRemainingSetupTurns(localPlayerSlot)}, у соперника {turnManager.GetRemainingSetupTurns(opponentSlot)}.";
         }
 
         private static string GetTurnWord(int value)
@@ -836,7 +940,68 @@ namespace RRaM.Core.UI
 
             return card.NetId != 0 &&
                    card.IsPlayable &&
-                   TurnManager.Instance.CanPlayerSpendDieAction(local.Player.PlayerSlot);
+                   TurnManager.Instance.CanPlayerSelectCharacter(local.Player.PlayerSlot, card.AssignedCharacterNetId) &&
+                   TurnManager.Instance.CanPlayerSpendDieActionWithMinimum(local.Player.PlayerSlot, card.MinimumDieValue);
+        }
+
+        private static bool CanDrawCard(LocalPlayerController local, bool isMyTurn)
+        {
+            TurnManager turnManager = TurnManager.Instance;
+            if (!isMyTurn ||
+                local?.Player == null ||
+                turnManager == null ||
+                BoardGraph.Instance == null ||
+                !turnManager.CanPlayerSpendDieAction(local.Player.PlayerSlot))
+            {
+                return false;
+            }
+
+            uint characterNetId = turnManager.ActiveCharacterNetId != 0
+                ? turnManager.ActiveCharacterNetId
+                : local.Player.SelectedCharacterNetId;
+            if (characterNetId == 0)
+            {
+                return false;
+            }
+
+            CharacterSnapshot selected = local.Player.Characters.FirstOrDefault(character => character.NetId == characterNetId);
+            if (selected.NetId == 0 ||
+                string.IsNullOrWhiteSpace(selected.CurrentNodeId) ||
+                !BoardGraph.Instance.TryGetNode(selected.CurrentNodeId, out BoardNode node))
+            {
+                return false;
+            }
+
+            bool isDeckNode = node.NodeKind == BoardNodeKind.GreenDeck || node.NodeKind == BoardNodeKind.RedDeck;
+            return isDeckNode && !turnManager.HasDrawnFromDeckNode(node.NodeId);
+        }
+
+        private static bool CanTransferCard(LocalPlayerController local, bool isMyTurn, CardSnapshot card)
+        {
+            TurnManager turnManager = TurnManager.Instance;
+            if (!isMyTurn ||
+                local?.Player == null ||
+                turnManager == null ||
+                card.NetId == 0 ||
+                !turnManager.CanPlayerTransferCard(local.Player.PlayerSlot))
+            {
+                return false;
+            }
+
+            uint sourceCharacterNetId = ResolveActionCharacterNetId(local);
+            return sourceCharacterNetId != 0 && card.AssignedCharacterNetId == sourceCharacterNetId;
+        }
+
+        private static uint ResolveActionCharacterNetId(LocalPlayerController local)
+        {
+            if (local?.Player == null || TurnManager.Instance == null)
+            {
+                return 0;
+            }
+
+            return TurnManager.Instance.ActiveCharacterNetId != 0
+                ? TurnManager.Instance.ActiveCharacterNetId
+                : local.Player.SelectedCharacterNetId;
         }
 
         private static string DescribeHandSlot(int handSlotIndex)
@@ -849,6 +1014,39 @@ namespace RRaM.Core.UI
             }
 
             return $"Слот {handSlotIndex + 1}";
+        }
+
+        private void UpdateRollDicePromptVisibility()
+        {
+            if (rollDicePromptObject == null)
+            {
+                return;
+            }
+
+            bool canShowPrompt = CanLocalPlayerRollDice(LocalPlayerController.Instance);
+            if (!canShowPrompt)
+            {
+                rollDiceRequestPending = false;
+                rollDiceRequestPendingUntil = 0f;
+            }
+            else if (rollDiceRequestPending && Time.unscaledTime >= rollDiceRequestPendingUntil)
+            {
+                rollDiceRequestPending = false;
+                rollDiceRequestPendingUntil = 0f;
+            }
+
+            bool shouldShowPrompt = canShowPrompt && !rollDiceRequestPending;
+            if (rollDicePromptObject.activeSelf != shouldShowPrompt)
+            {
+                rollDicePromptObject.SetActive(shouldShowPrompt);
+            }
+        }
+
+        private static bool CanLocalPlayerRollDice(LocalPlayerController local)
+        {
+            return local?.Player != null &&
+                   TurnManager.Instance != null &&
+                   TurnManager.Instance.CanPlayerRoll(local.Player.PlayerSlot);
         }
     }
 }

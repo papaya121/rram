@@ -1,5 +1,10 @@
 using System.Collections;
 using Mirror;
+using RRaM.Core.Board;
+using RRaM.Core.Characters;
+using RRaM.Core.Dice;
+using RRaM.Core.Networking;
+using RRaM.Core.Turns;
 using UnityEngine;
 
 namespace RRaM.Core.Cards
@@ -21,15 +26,18 @@ namespace RRaM.Core.Cards
         private bool isBindingToHand;
         private bool isUsePending;
         private bool isPendingConsume;
+        private bool isInSelectionPanel;
         private bool hasResolvedPresentation;
         private bool lastRevealState;
         private bool hasRevealState;
 
         public BaseCard Data => data;
+        public CardAnimator Animator => animator;
         public uint AssignedCharacterNetId => assignedCharacterNetId;
         public int HandSlotIndex => handSlotIndex;
         public int OwnerPlayerSlot => ownerPlayerSlot;
         public bool IsPendingConsume => isPendingConsume;
+        public bool IsInSelectionPanel => isInSelectionPanel;
 
         private void Awake()
         {
@@ -54,6 +62,13 @@ namespace RRaM.Core.Cards
             ownerPlayerSlot = playerSlot;
         }
 
+        [Server]
+        public void ServerAssignCharacter(uint characterNetId, int slotIndex)
+        {
+            assignedCharacterNetId = characterNetId;
+            handSlotIndex = slotIndex;
+        }
+
         public override void OnStartClient()
         {
             base.OnStartClient();
@@ -64,6 +79,8 @@ namespace RRaM.Core.Cards
 
         public override void OnStopClient()
         {
+            CardSelectionPanel.Instance?.NotifyCardRemoved(this);
+
             if (boundHandController != null)
             {
                 boundHandController.RemoveCard(this);
@@ -96,7 +113,7 @@ namespace RRaM.Core.Cards
 
         public void TryUseFromLocalClient()
         {
-            if (!isClient || isUsePending || data == null || !data.IsPlayable || !CanLocalPlayerInteract())
+            if (!CanUseFromLocalClient())
             {
                 return;
             }
@@ -106,12 +123,66 @@ namespace RRaM.Core.Cards
 
         public void TryDiscardFromLocalClient()
         {
-            if (!isClient || isUsePending || !CanLocalPlayerInteract())
+            if (!CanDiscardFromLocalClient())
             {
                 return;
             }
 
+            isUsePending = true;
             CmdDiscardCard();
+        }
+
+        public bool CanSelectFromLocalClient()
+        {
+            return isClient && !isUsePending && CanLocalPlayerInteract();
+        }
+
+        public bool CanDiscardFromLocalClient()
+        {
+            return CanSelectFromLocalClient();
+        }
+
+        public bool CanUseFromLocalClient()
+        {
+            if (!CanSelectFromLocalClient() || data == null || !data.IsPlayable)
+            {
+                return false;
+            }
+
+            LocalPlayerController local = LocalPlayerController.Instance;
+            if (local == null || local.Player == null || TurnManager.Instance == null)
+            {
+                return false;
+            }
+
+            if (!TurnManager.Instance.CanPlayerSpendDieActionWithMinimum(local.Player.PlayerSlot, data.MinimumDieValue) ||
+                !TurnManager.Instance.CanPlayerSelectCharacter(local.Player.PlayerSlot, assignedCharacterNetId))
+            {
+                return false;
+            }
+
+            CardContext context = BuildLocalContext(local.Player);
+            return context.character != null && data.CanUse(context);
+        }
+
+        public void BeginSelectionPresentation()
+        {
+            isInSelectionPanel = true;
+            animator?.CancelRootAnimation();
+            animator?.ClearHoverImmediate();
+            boundHandController?.RefreshCard(this, animate: true);
+        }
+
+        public void EndSelectionPresentation(bool animate)
+        {
+            isInSelectionPanel = false;
+            if (boundHandController != null)
+            {
+                boundHandController.RefreshCard(this, animate);
+                return;
+            }
+
+            TryBindToHand(animate);
         }
 
         public void ApplyHandLayout(Vector3 localPosition, Quaternion localRotation, Vector3 localScale, bool animate)
@@ -134,7 +205,7 @@ namespace RRaM.Core.Cards
                 return;
             }
 
-            if (isBindingToHand)
+            if (isBindingToHand || isInSelectionPanel)
             {
                 animator.ClearHoverImmediate();
                 return;
@@ -220,7 +291,7 @@ namespace RRaM.Core.Cards
 
         private void TryBindToHand(bool animate)
         {
-            if (isBindingToHand)
+            if (isBindingToHand || isInSelectionPanel)
             {
                 return;
             }
@@ -235,7 +306,7 @@ namespace RRaM.Core.Cards
                 return;
             }
 
-            HandController handController = HandController.Instance != null ? HandController.Instance : FindAnyObjectByType<HandController>();
+            HandController handController = HandController.Resolve(activateIfInactive: true);
             if (handController == null)
             {
                 return;
@@ -313,6 +384,32 @@ namespace RRaM.Core.Cards
             return CanLocalPlayerInteract();
         }
 
+        private CardContext BuildLocalContext(NetworkPlayerConnection player)
+        {
+            return new CardContext
+            {
+                player = player,
+                character = ResolveLocalAssignedCharacter(),
+                diceSystem = DiceManager.Instance,
+                board = BoardGraph.Instance,
+                owner = player != null ? player.netIdentity : null,
+                turnManager = TurnManager.Instance,
+                cardManager = CardManager.Instance,
+                cardInstance = this
+            };
+        }
+
+        private NetworkCharacterPawn ResolveLocalAssignedCharacter()
+        {
+            if (assignedCharacterNetId == 0 ||
+                !NetworkClient.spawned.TryGetValue(assignedCharacterNetId, out NetworkIdentity identity))
+            {
+                return null;
+            }
+
+            return identity.GetComponent<NetworkCharacterPawn>();
+        }
+
         private void OnCardIdChanged(string _, string __)
         {
             ResolveCardData();
@@ -333,11 +430,11 @@ namespace RRaM.Core.Cards
             TryBindToHand(animate: true);
         }
 
-        private void OnHandSlotIndexChanged(int _, int __)
+        private void OnHandSlotIndexChanged(int oldValue, int __)
         {
             if (boundHandController != null)
             {
-                boundHandController.RemoveCard(this);
+                boundHandController.RemoveCardFromSlot(this, ownerPlayerSlot, oldValue);
                 boundHandController = null;
             }
 

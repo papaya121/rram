@@ -12,6 +12,8 @@ namespace RRaM.Core.Turns
     /// </summary>
     public sealed class TurnManager : NetworkBehaviour
     {
+        public sealed class SyncDeckNodeIdSet : SyncHashSet<string> { }
+
         public static TurnManager Instance { get; private set; }
 
         [SyncVar] public TurnMode CurrentMode = TurnMode.Setup;
@@ -21,9 +23,13 @@ namespace RRaM.Core.Turns
         [SyncVar] public int MoveBonus;
         [SyncVar] public int RemainingMovePoints;
         [SyncVar] public int RemainingDieActions;
+        [SyncVar] public bool DieAAvailable;
+        [SyncVar] public bool DieBAvailable;
+        [SyncVar] public int RemainingCardTransfers;
         [SyncVar] public bool HasMovedThisTurn;
         [SyncVar] public int CompletedTurnCount;
         [SyncVar] public int ActiveActionPlayerSlot = -1;
+        [SyncVar] public uint ActiveCharacterNetId;
         [SyncVar] public int SetupTurnsPerPlayer;
         [SyncVar] private int playerZeroSetupTurnsRemaining;
         [SyncVar] private int playerOneSetupTurnsRemaining;
@@ -31,7 +37,9 @@ namespace RRaM.Core.Turns
         public event Action<int> ServerTurnCompleted;
 
         private readonly List<int> orderedPlayerSlots = new();
+        private readonly SyncDeckNodeIdSet drawnDeckNodeIdsThisTurn = new();
         private int currentPlayerIndex;
+        private int starterPlayerIndex;
 
         public TurnStateSnapshot Snapshot => new(TurnNumber, CurrentPlayerSlot, CurrentPhase, HasMovedThisTurn);
 
@@ -66,16 +74,20 @@ namespace RRaM.Core.Turns
                 .Distinct()
                 .OrderBy(slot => slot));
 
-            currentPlayerIndex = 0;
+            starterPlayerIndex = orderedPlayerSlots.Count > 0 ? UnityEngine.Random.Range(0, orderedPlayerSlots.Count) : 0;
+            currentPlayerIndex = starterPlayerIndex;
             SetupTurnsPerPlayer = Mathf.Max(1, setupTurnsPerPlayer);
             playerZeroSetupTurnsRemaining = SetupTurnsPerPlayer;
             playerOneSetupTurnsRemaining = SetupTurnsPerPlayer;
             CurrentMode = TurnMode.Setup;
             TurnNumber = 1;
-            CurrentPlayerSlot = -1;
-            ActiveActionPlayerSlot = -1;
+            CurrentPlayerSlot = orderedPlayerSlots.Count > 0 ? orderedPlayerSlots[currentPlayerIndex] : -1;
+            ActiveActionPlayerSlot = CurrentPlayerSlot;
             CurrentPhase = TurnPhase.WaitingForRoll;
+            ActiveCharacterNetId = 0;
+            drawnDeckNodeIdsThisTurn.Clear();
             Dice.DiceManager.Instance?.ServerResetTurn();
+            ClearPlayerSelections(players);
         }
 
         /// <summary>
@@ -86,6 +98,7 @@ namespace RRaM.Core.Turns
         {
             orderedPlayerSlots.Clear();
             currentPlayerIndex = 0;
+            starterPlayerIndex = 0;
             CurrentMode = TurnMode.Setup;
             CurrentPlayerSlot = -1;
             TurnNumber = 0;
@@ -93,12 +106,17 @@ namespace RRaM.Core.Turns
             MoveBonus = 0;
             RemainingMovePoints = 0;
             RemainingDieActions = 0;
+            DieAAvailable = false;
+            DieBAvailable = false;
+            RemainingCardTransfers = 0;
             HasMovedThisTurn = false;
             CompletedTurnCount = 0;
             ActiveActionPlayerSlot = -1;
+            ActiveCharacterNetId = 0;
             SetupTurnsPerPlayer = 0;
             playerZeroSetupTurnsRemaining = 0;
             playerOneSetupTurnsRemaining = 0;
+            drawnDeckNodeIdsThisTurn.Clear();
         }
 
         /// <summary>
@@ -116,12 +134,15 @@ namespace RRaM.Core.Turns
         [Server]
         public void ServerOnDiceRolled(NetworkPlayerConnection player)
         {
-            if (CurrentMode == TurnMode.Setup && player != null)
+            if (player != null && player.PlayerSlot == CurrentPlayerSlot)
             {
                 ActiveActionPlayerSlot = player.PlayerSlot;
             }
 
-            RemainingDieActions = 2;
+            DieAAvailable = true;
+            DieBAvailable = true;
+            RefreshRemainingDieActions();
+            RemainingCardTransfers = 0;
             RemainingMovePoints = ResolveAvailableMoveBudget();
             CurrentPhase = TurnPhase.WaitingForMove;
         }
@@ -151,8 +172,9 @@ namespace RRaM.Core.Turns
         /// </summary>
         public int GetCurrentMoveBudget()
         {
-            int diceTotal = Dice.DiceManager.Instance != null ? Dice.DiceManager.Instance.Total : 0;
-            return diceTotal + MoveBonus;
+            return HasMovedThisTurn
+                ? GetRemainingMoveBudget()
+                : GetAvailableDiceTotal() + MoveBonus;
         }
 
         /// <summary>
@@ -160,8 +182,9 @@ namespace RRaM.Core.Turns
         /// </summary>
         public int GetPrimaryMoveBudget()
         {
-            int firstDie = Dice.DiceManager.Instance != null ? Dice.DiceManager.Instance.DieA : 0;
-            return firstDie + MoveBonus;
+            return HasMovedThisTurn
+                ? 0
+                : GetSingleDieMoveBudget() + MoveBonus;
         }
 
         /// <summary>
@@ -181,6 +204,14 @@ namespace RRaM.Core.Turns
         }
 
         /// <summary>
+        /// Returns how many card transfers remain from the currently spent transfer die.
+        /// </summary>
+        public int GetRemainingCardTransfers()
+        {
+            return Mathf.Max(0, RemainingCardTransfers);
+        }
+
+        /// <summary>
         /// Returns true if the player may spend one die on a non-movement action.
         /// </summary>
         public bool CanPlayerSpendDieAction(int playerSlot)
@@ -190,6 +221,12 @@ namespace RRaM.Core.Turns
                    Dice.DiceManager.Instance != null &&
                    Dice.DiceManager.Instance.HasRolled &&
                    RemainingDieActions > 0;
+        }
+
+        public bool CanPlayerSpendDieActionWithMinimum(int playerSlot, int minimumDieValue)
+        {
+            return CanPlayerSpendDieAction(playerSlot) &&
+                   HasAvailableDieAtLeast(Mathf.Max(1, minimumDieValue));
         }
 
         /// <summary>
@@ -203,17 +240,134 @@ namespace RRaM.Core.Turns
                 return false;
             }
 
-            RemainingDieActions -= amount;
-            if (RemainingDieActions <= 0)
+            RemainingCardTransfers = 0;
+            for (int i = 0; i < amount; i++)
+            {
+                if (!TryConsumeAvailableDie(DieConsumptionPreference.Smallest, out _))
+                {
+                    return false;
+                }
+            }
+
+            ApplyPostDieConsumptionState();
+            return true;
+        }
+
+        [Server]
+        public bool ServerTryConsumeDieActionWithMinimum(int playerSlot, int minimumDieValue)
+        {
+            if (!CanPlayerSpendDieActionWithMinimum(playerSlot, minimumDieValue))
+            {
+                return false;
+            }
+
+            RemainingCardTransfers = 0;
+            if (!TryConsumeAvailableDieAtLeast(Mathf.Max(1, minimumDieValue), out _))
+            {
+                return false;
+            }
+
+            ApplyPostDieConsumptionState();
+            return true;
+        }
+
+        /// <summary>
+        /// Returns true if the player can transfer a card from the active character this turn.
+        /// </summary>
+        public bool CanPlayerTransferCard(int playerSlot)
+        {
+            return CanPlayerModifyCurrentAction(playerSlot) &&
+                   Dice.DiceManager.Instance != null &&
+                   Dice.DiceManager.Instance.HasRolled &&
+                   (RemainingCardTransfers > 0 ||
+                    (CurrentPhase == TurnPhase.WaitingForMove && RemainingDieActions > 0));
+        }
+
+        /// <summary>
+        /// Consumes one card-transfer allowance, spending the smallest available die when needed.
+        /// </summary>
+        [Server]
+        public bool ServerTryConsumeCardTransfer(int playerSlot)
+        {
+            if (!CanPlayerTransferCard(playerSlot))
+            {
+                return false;
+            }
+
+            if (RemainingCardTransfers <= 0)
+            {
+                if (!CanPlayerSpendDieAction(playerSlot) ||
+                    !TryConsumeAvailableDie(DieConsumptionPreference.Smallest, out int dieValue))
+                {
+                    return false;
+                }
+
+                RemainingCardTransfers = Mathf.Max(0, dieValue);
+                RefreshRemainingDieActions();
+                RemainingMovePoints = !HasMovedThisTurn ? ResolveAvailableMoveBudget() : 0;
+            }
+
+            RemainingCardTransfers = Mathf.Max(0, RemainingCardTransfers - 1);
+            if (RemainingDieActions <= 0 && RemainingCardTransfers <= 0)
             {
                 RemainingMovePoints = 0;
                 CurrentPhase = TurnPhase.WaitingForEndTurn;
             }
-            else if (!HasMovedThisTurn)
+
+            return true;
+        }
+
+        /// <summary>
+        /// Locks the current turn to one character before resolving a die-backed action.
+        /// </summary>
+        [Server]
+        public bool ServerTryUseCharacterForCurrentTurn(int playerSlot, uint characterNetId)
+        {
+            if (characterNetId == 0 || !CanPlayerAct(playerSlot) || CurrentPhase != TurnPhase.WaitingForMove)
             {
-                RemainingMovePoints = ResolveAvailableMoveBudget();
+                return false;
             }
 
+            bool isContinuingMovement =
+                HasMovedThisTurn &&
+                ActiveCharacterNetId == characterNetId &&
+                RemainingMovePoints > 0;
+            if (isContinuingMovement)
+            {
+                return true;
+            }
+
+            if (!CanPlayerSpendDieAction(playerSlot) || !CanPlayerSelectCharacter(playerSlot, characterNetId))
+            {
+                return false;
+            }
+
+            if (ActiveCharacterNetId == 0)
+            {
+                ActiveCharacterNetId = characterNetId;
+            }
+
+            return ActiveCharacterNetId == characterNetId;
+        }
+
+        /// <summary>
+        /// Consumes one die for a deck draw and remembers the deck point used this turn.
+        /// </summary>
+        [Server]
+        public bool ServerTryConsumeDeckDrawAction(int playerSlot, string deckNodeId)
+        {
+            string normalizedDeckNodeId = NormalizeDeckNodeId(deckNodeId);
+            if (string.IsNullOrEmpty(normalizedDeckNodeId) || HasDrawnFromDeckNode(normalizedDeckNodeId))
+            {
+                return false;
+            }
+
+            if (!ServerTryConsumeDieAction(playerSlot))
+            {
+                return false;
+            }
+
+            drawnDeckNodeIdsThisTurn.Add(normalizedDeckNodeId);
             return true;
         }
 
@@ -228,16 +382,13 @@ namespace RRaM.Core.Turns
                 return false;
             }
 
-            int requiredDieActions = usedSteps > GetPrimaryMoveBudget() ? 2 : 1;
-            if (RemainingDieActions < requiredDieActions)
-            {
-                return false;
-            }
-
-            RemainingDieActions -= requiredDieActions;
-            RemainingMovePoints = 0;
+            RemainingCardTransfers = 0;
+            RemainingMovePoints = Mathf.Max(0, RemainingMovePoints - usedSteps);
             HasMovedThisTurn = true;
-            if (RemainingDieActions <= 0)
+            DieAAvailable = false;
+            DieBAvailable = false;
+            RefreshRemainingDieActions();
+            if (RemainingMovePoints <= 0)
             {
                 CurrentPhase = TurnPhase.WaitingForEndTurn;
             }
@@ -252,14 +403,19 @@ namespace RRaM.Core.Turns
         public void ServerBeginAlternatingPhase()
         {
             CurrentMode = TurnMode.Alternating;
-            currentPlayerIndex = 0;
-            CurrentPlayerSlot = orderedPlayerSlots.Count > 0 ? orderedPlayerSlots[0] : -1;
-            ActiveActionPlayerSlot = -1;
+            currentPlayerIndex = Mathf.Clamp(starterPlayerIndex, 0, Mathf.Max(0, orderedPlayerSlots.Count - 1));
+            CurrentPlayerSlot = orderedPlayerSlots.Count > 0 ? orderedPlayerSlots[currentPlayerIndex] : -1;
+            ActiveActionPlayerSlot = CurrentPlayerSlot;
             CurrentPhase = TurnPhase.WaitingForRoll;
             MoveBonus = 0;
             RemainingMovePoints = 0;
             RemainingDieActions = 0;
+            DieAAvailable = false;
+            DieBAvailable = false;
+            RemainingCardTransfers = 0;
             HasMovedThisTurn = false;
+            ActiveCharacterNetId = 0;
+            drawnDeckNodeIdsThisTurn.Clear();
             Dice.DiceManager.Instance?.ServerResetTurn();
         }
 
@@ -291,14 +447,15 @@ namespace RRaM.Core.Turns
 
             if (CurrentMode == TurnMode.Setup)
             {
-                if (!CanPlayerAct(player.PlayerSlot) || (!force && !CanPlayerFinishSetupAction(player.PlayerSlot)))
+                if (player.PlayerSlot != CurrentPlayerSlot ||
+                    !CanPlayerAct(player.PlayerSlot) ||
+                    (!force && !CanPlayerFinishSetupAction(player.PlayerSlot)))
                 {
                     return false;
                 }
 
                 ConsumeSetupTurn(player.PlayerSlot);
-                ActiveActionPlayerSlot = -1;
-                CurrentPlayerSlot = -1;
+                AdvanceSetupTurnOrder();
             }
             else
             {
@@ -309,6 +466,7 @@ namespace RRaM.Core.Turns
 
                 currentPlayerIndex = (currentPlayerIndex + 1) % orderedPlayerSlots.Count;
                 CurrentPlayerSlot = orderedPlayerSlots[currentPlayerIndex];
+                ActiveActionPlayerSlot = CurrentPlayerSlot;
             }
 
             CompletedTurnCount++;
@@ -316,9 +474,15 @@ namespace RRaM.Core.Turns
             MoveBonus = 0;
             RemainingMovePoints = 0;
             RemainingDieActions = 0;
+            DieAAvailable = false;
+            DieBAvailable = false;
+            RemainingCardTransfers = 0;
             HasMovedThisTurn = false;
+            ActiveCharacterNetId = 0;
             CurrentPhase = TurnPhase.WaitingForRoll;
+            drawnDeckNodeIdsThisTurn.Clear();
             Dice.DiceManager.Instance?.ServerResetTurn();
+            ClearPlayerSelections(Match.MatchManager.Instance?.Players);
             ServerTurnCompleted?.Invoke(CompletedTurnCount);
             return true;
         }
@@ -350,7 +514,7 @@ namespace RRaM.Core.Turns
             if (CurrentMode == TurnMode.Setup)
             {
                 int remainingTurns = GetRemainingSetupTurns(playerSlot);
-                return remainingTurns > 0 && (ActiveActionPlayerSlot == -1 || ActiveActionPlayerSlot == playerSlot);
+                return remainingTurns > 0 && playerSlot == CurrentPlayerSlot;
             }
 
             return playerSlot == CurrentPlayerSlot;
@@ -367,8 +531,7 @@ namespace RRaM.Core.Turns
                    CurrentPhase == TurnPhase.WaitingForMove &&
                    Dice.DiceManager.Instance != null &&
                    Dice.DiceManager.Instance.HasRolled &&
-                   !HasMovedThisTurn &&
-                   RemainingDieActions > 0 &&
+                   (RemainingDieActions > 0 || HasMovedThisTurn) &&
                    RemainingMovePoints > 0;
         }
 
@@ -387,6 +550,27 @@ namespace RRaM.Core.Turns
             return CurrentPhase == TurnPhase.WaitingForMove && Dice.DiceManager.Instance != null && Dice.DiceManager.Instance.HasRolled;
         }
 
+        public bool CanPlayerSelectCharacter(int playerSlot, uint characterNetId)
+        {
+            if (characterNetId == 0 ||
+                !CanPlayerAct(playerSlot) ||
+                CurrentPhase != TurnPhase.WaitingForMove ||
+                Dice.DiceManager.Instance == null ||
+                !Dice.DiceManager.Instance.HasRolled)
+            {
+                return false;
+            }
+
+            return ActiveCharacterNetId == 0 || ActiveCharacterNetId == characterNetId;
+        }
+
+        public bool HasDrawnFromDeckNode(string deckNodeId)
+        {
+            string normalizedDeckNodeId = NormalizeDeckNodeId(deckNodeId);
+            return !string.IsNullOrEmpty(normalizedDeckNodeId) &&
+                   drawnDeckNodeIdsThisTurn.Contains(normalizedDeckNodeId);
+        }
+
         private bool CanPlayerModifyCurrentAction(int playerSlot)
         {
             if (playerSlot < 0)
@@ -396,7 +580,7 @@ namespace RRaM.Core.Turns
 
             if (CurrentMode == TurnMode.Setup)
             {
-                return ActiveActionPlayerSlot == playerSlot && GetRemainingSetupTurns(playerSlot) > 0;
+                return playerSlot == CurrentPlayerSlot && GetRemainingSetupTurns(playerSlot) > 0;
             }
 
             return playerSlot == CurrentPlayerSlot;
@@ -428,9 +612,37 @@ namespace RRaM.Core.Turns
             }
         }
 
+        [Server]
+        private void AdvanceSetupTurnOrder()
+        {
+            if (orderedPlayerSlots.Count == 0 || AreSetupTurnsFinished())
+            {
+                CurrentPlayerSlot = -1;
+                ActiveActionPlayerSlot = -1;
+                return;
+            }
+
+            for (int i = 0; i < orderedPlayerSlots.Count; i++)
+            {
+                currentPlayerIndex = (currentPlayerIndex + 1) % orderedPlayerSlots.Count;
+                int nextPlayerSlot = orderedPlayerSlots[currentPlayerIndex];
+                if (GetRemainingSetupTurns(nextPlayerSlot) <= 0)
+                {
+                    continue;
+                }
+
+                CurrentPlayerSlot = nextPlayerSlot;
+                ActiveActionPlayerSlot = nextPlayerSlot;
+                return;
+            }
+
+            CurrentPlayerSlot = -1;
+            ActiveActionPlayerSlot = -1;
+        }
+
         private int ResolveActivePlayerSlot()
         {
-            return CurrentMode == TurnMode.Setup ? ActiveActionPlayerSlot : CurrentPlayerSlot;
+            return CurrentPlayerSlot;
         }
 
         private int ResolveAvailableMoveBudget()
@@ -441,6 +653,225 @@ namespace RRaM.Core.Turns
             }
 
             return RemainingDieActions >= 2 ? GetCurrentMoveBudget() : GetPrimaryMoveBudget();
+        }
+
+        private int GetSingleDieMoveBudget()
+        {
+            if (Dice.DiceManager.Instance == null || RemainingDieActions <= 0)
+            {
+                return 0;
+            }
+
+            int best = 0;
+            if (DieAAvailable)
+            {
+                best = Mathf.Max(best, Dice.DiceManager.Instance.DieA);
+            }
+
+            if (DieBAvailable)
+            {
+                best = Mathf.Max(best, Dice.DiceManager.Instance.DieB);
+            }
+
+            return best;
+        }
+
+        private int GetAvailableDiceTotal()
+        {
+            if (Dice.DiceManager.Instance == null)
+            {
+                return 0;
+            }
+
+            int total = 0;
+            if (DieAAvailable)
+            {
+                total += Dice.DiceManager.Instance.DieA;
+            }
+
+            if (DieBAvailable)
+            {
+                total += Dice.DiceManager.Instance.DieB;
+            }
+
+            return total;
+        }
+
+        private bool CanSingleAvailableDieCoverMovement(int usedSteps)
+        {
+            if (Dice.DiceManager.Instance == null)
+            {
+                return false;
+            }
+
+            return (DieAAvailable && usedSteps <= Dice.DiceManager.Instance.DieA + MoveBonus) ||
+                   (DieBAvailable && usedSteps <= Dice.DiceManager.Instance.DieB + MoveBonus);
+        }
+
+        private bool TryConsumeMovementDie(int usedSteps, out int dieValue)
+        {
+            dieValue = 0;
+            if (Dice.DiceManager.Instance == null)
+            {
+                return false;
+            }
+
+            bool canUseA = DieAAvailable && usedSteps <= Dice.DiceManager.Instance.DieA + MoveBonus;
+            bool canUseB = DieBAvailable && usedSteps <= Dice.DiceManager.Instance.DieB + MoveBonus;
+            if (!canUseA && !canUseB)
+            {
+                return false;
+            }
+
+            if (canUseA && (!canUseB || Dice.DiceManager.Instance.DieA <= Dice.DiceManager.Instance.DieB))
+            {
+                dieValue = Dice.DiceManager.Instance.DieA;
+                DieAAvailable = false;
+                return true;
+            }
+
+            dieValue = Dice.DiceManager.Instance.DieB;
+            DieBAvailable = false;
+            return true;
+        }
+
+        private bool TryConsumeAllAvailableDice()
+        {
+            if (RemainingDieActions <= 0)
+            {
+                return false;
+            }
+
+            DieAAvailable = false;
+            DieBAvailable = false;
+            return true;
+        }
+
+        private enum DieConsumptionPreference
+        {
+            Smallest,
+            Largest
+        }
+
+        private bool TryConsumeAvailableDie(DieConsumptionPreference preference, out int dieValue)
+        {
+            dieValue = 0;
+            if (Dice.DiceManager.Instance == null || RemainingDieActions <= 0)
+            {
+                return false;
+            }
+
+            bool useA;
+            if (DieAAvailable && DieBAvailable)
+            {
+                useA = preference == DieConsumptionPreference.Smallest
+                    ? Dice.DiceManager.Instance.DieA <= Dice.DiceManager.Instance.DieB
+                    : Dice.DiceManager.Instance.DieA >= Dice.DiceManager.Instance.DieB;
+            }
+            else
+            {
+                useA = DieAAvailable;
+            }
+
+            if (useA && DieAAvailable)
+            {
+                dieValue = Dice.DiceManager.Instance.DieA;
+                DieAAvailable = false;
+                RefreshRemainingDieActions();
+                return true;
+            }
+
+            if (!DieBAvailable)
+            {
+                return false;
+            }
+
+            dieValue = Dice.DiceManager.Instance.DieB;
+            DieBAvailable = false;
+            RefreshRemainingDieActions();
+            return true;
+        }
+
+        private bool HasAvailableDieAtLeast(int minimumDieValue)
+        {
+            if (Dice.DiceManager.Instance == null)
+            {
+                return false;
+            }
+
+            return (DieAAvailable && Dice.DiceManager.Instance.DieA >= minimumDieValue) ||
+                   (DieBAvailable && Dice.DiceManager.Instance.DieB >= minimumDieValue);
+        }
+
+        private bool TryConsumeAvailableDieAtLeast(int minimumDieValue, out int dieValue)
+        {
+            dieValue = 0;
+            if (Dice.DiceManager.Instance == null || RemainingDieActions <= 0)
+            {
+                return false;
+            }
+
+            bool canUseA = DieAAvailable && Dice.DiceManager.Instance.DieA >= minimumDieValue;
+            bool canUseB = DieBAvailable && Dice.DiceManager.Instance.DieB >= minimumDieValue;
+            if (!canUseA && !canUseB)
+            {
+                return false;
+            }
+
+            if (canUseA && (!canUseB || Dice.DiceManager.Instance.DieA <= Dice.DiceManager.Instance.DieB))
+            {
+                dieValue = Dice.DiceManager.Instance.DieA;
+                DieAAvailable = false;
+                RefreshRemainingDieActions();
+                return true;
+            }
+
+            dieValue = Dice.DiceManager.Instance.DieB;
+            DieBAvailable = false;
+            RefreshRemainingDieActions();
+            return true;
+        }
+
+        private void RefreshRemainingDieActions()
+        {
+            RemainingDieActions = (DieAAvailable ? 1 : 0) + (DieBAvailable ? 1 : 0);
+        }
+
+        private void ApplyPostDieConsumptionState()
+        {
+            RefreshRemainingDieActions();
+            if (RemainingDieActions <= 0)
+            {
+                RemainingMovePoints = 0;
+                CurrentPhase = TurnPhase.WaitingForEndTurn;
+            }
+            else if (!HasMovedThisTurn)
+            {
+                RemainingMovePoints = ResolveAvailableMoveBudget();
+            }
+            else
+            {
+                RemainingMovePoints = 0;
+            }
+        }
+
+        private static string NormalizeDeckNodeId(string deckNodeId)
+        {
+            return string.IsNullOrWhiteSpace(deckNodeId) ? string.Empty : deckNodeId.Trim();
+        }
+
+        [Server]
+        private static void ClearPlayerSelections(IReadOnlyList<NetworkPlayerConnection> players)
+        {
+            if (players == null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < players.Count; i++)
+            {
+                players[i]?.SetSelectedCharacter(0);
+            }
         }
 
         private void OnDestroy()

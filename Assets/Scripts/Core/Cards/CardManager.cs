@@ -1,5 +1,5 @@
-using System.Collections.Generic;
 using System.Collections;
+using System.Collections.Generic;
 using Mirror;
 using RRaM.Core.Board;
 using RRaM.Core.Characters;
@@ -35,6 +35,7 @@ namespace RRaM.Core.Cards
         public void ServerInitialize(IReadOnlyList<NetworkPlayerConnection> players)
         {
             ServerResetState(players);
+            ServerDealStarterCards(players);
         }
 
         [Server]
@@ -81,7 +82,27 @@ namespace RRaM.Core.Cards
                 return false;
             }
 
-            if (!TurnManager.Instance.ServerTryConsumeDieAction(player.PlayerSlot))
+            if (!TryResolveTurnCharacter(player, out NetworkCharacterPawn actingCharacter))
+            {
+                Debug.LogWarning("[Cards] Draw rejected. No selected active character for this turn.");
+                return false;
+            }
+
+            if (!TryResolveDeckNode(actingCharacter, out string deckNodeId))
+            {
+                Debug.LogWarning($"[Cards] Draw rejected. Character '{actingCharacter.DisplayName}' is not standing on a deck point.");
+                return false;
+            }
+
+            if (!TurnManager.Instance.ServerTryUseCharacterForCurrentTurn(player.PlayerSlot, actingCharacter.netId))
+            {
+                Debug.LogWarning($"[Cards] Draw rejected. Turn is locked to another character. Slot={player.PlayerSlot}, CharacterNetId={actingCharacter.netId}, ActiveCharacterNetId={TurnManager.Instance.ActiveCharacterNetId}");
+                return false;
+            }
+
+            player.SetSelectedCharacter(actingCharacter.netId);
+
+            if (!TurnManager.Instance.ServerTryConsumeDeckDrawAction(player.PlayerSlot, deckNodeId))
             {
                 return false;
             }
@@ -92,27 +113,9 @@ namespace RRaM.Core.Cards
                 return false;
             }
 
-            if (!TryResolveDrawCharacter(player, cardData, out NetworkCharacterPawn assignedCharacter))
-            {
-                Debug.LogWarning($"[Cards] Draw aborted. Could not resolve a character for '{cardData.CardId}'.");
-                return false;
-            }
-
-            CardContext drawContext = BuildContext(player, assignedCharacter, null);
+            CardContext drawContext = BuildContext(player, actingCharacter, null);
             int handSlotIndex = Mathf.Clamp(cardData.ResolveHandSlotIndex(drawContext), 0, HandSlotCount - 1);
-
-            CardInstance cardInstance = Instantiate(deck.CardPrefab);
-            cardInstance.name = $"Card_{cardData.CardId}";
-            cardInstance.Initialize(cardData, player.netId, assignedCharacter.netId, handSlotIndex, player.PlayerSlot);
-            NetworkServer.Spawn(cardInstance.gameObject);
-
-            if (!cardsByPlayerSlot.TryGetValue(player.PlayerSlot, out List<CardInstance> cards))
-            {
-                cards = new List<CardInstance>();
-                cardsByPlayerSlot[player.PlayerSlot] = cards;
-            }
-
-            cards.Add(cardInstance);
+            ServerSpawnOwnedCard(player, cardData, actingCharacter, handSlotIndex);
             SyncPlayerCards(player);
             return true;
         }
@@ -129,6 +132,13 @@ namespace RRaM.Core.Cards
         {
             return TryGetServerCard(cardNetId, out CardInstance cardInstance) &&
                    ServerTryDiscardCard(player, cardInstance);
+        }
+
+        [Server]
+        public bool ServerTryTransferOwnedCard(NetworkPlayerConnection player, uint cardNetId, uint targetCharacterNetId)
+        {
+            return TryGetServerCard(cardNetId, out CardInstance cardInstance) &&
+                   ServerTryTransferCard(player, cardInstance, targetCharacterNetId);
         }
 
         [Server]
@@ -184,7 +194,14 @@ namespace RRaM.Core.Cards
                 return false;
             }
 
-            if (!TurnManager.Instance.ServerTryConsumeDieAction(player.PlayerSlot))
+            if (!TurnManager.Instance.ServerTryUseCharacterForCurrentTurn(player.PlayerSlot, context.character.netId))
+            {
+                return false;
+            }
+
+            player.SetSelectedCharacter(context.character.netId);
+
+            if (!TurnManager.Instance.ServerTryConsumeDieActionWithMinimum(player.PlayerSlot, cardInstance.Data.MinimumDieValue))
             {
                 return false;
             }
@@ -221,12 +238,165 @@ namespace RRaM.Core.Cards
                 return false;
             }
 
+            Deck deck = GetDeck();
+            if (deck != null && cardInstance.Data != null)
+            {
+                deck.ReturnCardAndShuffle(cardInstance.Data);
+            }
+
             cardInstance.ServerMarkPendingConsume();
             ServerConsumeCard(cardInstance);
             return true;
         }
 
+        [Server]
+        private bool ServerTryTransferCard(NetworkPlayerConnection player, CardInstance cardInstance, uint targetCharacterNetId)
+        {
+            if (player == null ||
+                cardInstance == null ||
+                cardInstance.IsPendingConsume ||
+                cardInstance.ownerNetId != player.netId ||
+                TurnManager.Instance == null ||
+                CharacterManager.Instance == null ||
+                !TurnManager.Instance.ServerIsCurrentPlayer(player) ||
+                !TurnManager.Instance.CanPlayerTransferCard(player.PlayerSlot))
+            {
+                return false;
+            }
+
+            if (!TryResolveTurnCharacter(player, out NetworkCharacterPawn sourceCharacter) ||
+                cardInstance.AssignedCharacterNetId != sourceCharacter.netId)
+            {
+                return false;
+            }
+
+            if (!CharacterManager.Instance.TryGetServerCharacter(targetCharacterNetId, out NetworkCharacterPawn targetCharacter) ||
+                targetCharacter.OwnerSlot != player.PlayerSlot ||
+                targetCharacter.netId == sourceCharacter.netId)
+            {
+                return false;
+            }
+
+            if (TurnManager.Instance.ActiveCharacterNetId == 0)
+            {
+                if (!TurnManager.Instance.ServerTryUseCharacterForCurrentTurn(player.PlayerSlot, sourceCharacter.netId))
+                {
+                    return false;
+                }
+            }
+            else if (TurnManager.Instance.ActiveCharacterNetId != sourceCharacter.netId)
+            {
+                return false;
+            }
+
+            if (!TurnManager.Instance.ServerTryConsumeCardTransfer(player.PlayerSlot))
+            {
+                return false;
+            }
+
+            player.SetSelectedCharacter(sourceCharacter.netId);
+            int handSlotIndex = Mathf.Clamp((int)targetCharacter.CharacterType, 0, HandSlotCount - 1);
+            cardInstance.ServerAssignCharacter(targetCharacter.netId, handSlotIndex);
+            SyncPlayerCards(player);
+            return true;
+        }
+
         private const int HandSlotCount = 5;
+
+        [Server]
+        private void ServerDealStarterCards(IReadOnlyList<NetworkPlayerConnection> players)
+        {
+            if (players == null || players.Count == 0)
+            {
+                return;
+            }
+
+            Match.MatchContext matchContext = Match.MatchContext.Instance;
+            if (matchContext == null || matchContext.Config == null)
+            {
+                return;
+            }
+
+            IReadOnlyList<RRaM.Core.Data.MatchPrototypeConfig.StarterCardDefinition> starterCards = matchContext.Config.StarterCards;
+            if (starterCards == null || starterCards.Count == 0)
+            {
+                return;
+            }
+
+            Deck deck = GetDeck();
+            if (deck == null || deck.CardPrefab == null)
+            {
+                Debug.LogWarning("[Cards] Starter cards were skipped because the deck or card prefab is missing.");
+                return;
+            }
+
+            if (CharacterManager.Instance == null)
+            {
+                Debug.LogWarning("[Cards] Starter cards were skipped because CharacterManager is missing.");
+                return;
+            }
+
+            for (int playerIndex = 0; playerIndex < players.Count; playerIndex++)
+            {
+                NetworkPlayerConnection player = players[playerIndex];
+                if (player == null)
+                {
+                    continue;
+                }
+
+                for (int cardIndex = 0; cardIndex < starterCards.Count; cardIndex++)
+                {
+                    RRaM.Core.Data.MatchPrototypeConfig.StarterCardDefinition starterCard = starterCards[cardIndex];
+                    if (starterCard.Card == null)
+                    {
+                        continue;
+                    }
+
+                    if (!CharacterManager.Instance.TryGetServerCharacter(player, starterCard.AssignedCharacter, out NetworkCharacterPawn assignedCharacter))
+                    {
+                        Debug.LogWarning($"[Cards] Starter card '{starterCard.Card.CardId}' was skipped for player slot {player.PlayerSlot} because the target character '{starterCard.AssignedCharacter}' was not found.");
+                        continue;
+                    }
+
+                    ServerSpawnOwnedCard(player, starterCard.Card, assignedCharacter, (int)starterCard.AssignedCharacter);
+                }
+
+                SyncPlayerCards(player);
+            }
+        }
+
+        [Server]
+        private CardInstance ServerSpawnOwnedCard(
+            NetworkPlayerConnection player,
+            BaseCard cardData,
+            NetworkCharacterPawn assignedCharacter,
+            int handSlotIndex)
+        {
+            Deck deck = GetDeck();
+            if (player == null || cardData == null || deck == null || deck.CardPrefab == null)
+            {
+                return null;
+            }
+
+            CardInstance cardInstance = Instantiate(deck.CardPrefab);
+            cardInstance.name = $"Card_{cardData.CardId}";
+            cardInstance.Initialize(
+                cardData,
+                player.netId,
+                assignedCharacter != null ? assignedCharacter.netId : 0,
+                Mathf.Clamp(handSlotIndex, 0, HandSlotCount - 1),
+                player.PlayerSlot);
+            NetworkServer.Spawn(cardInstance.gameObject);
+
+            if (!cardsByPlayerSlot.TryGetValue(player.PlayerSlot, out List<CardInstance> cards))
+            {
+                cards = new List<CardInstance>();
+                cardsByPlayerSlot[player.PlayerSlot] = cards;
+            }
+
+            cards.Add(cardInstance);
+            return cardInstance;
+        }
 
         [Server]
         private IEnumerator ServerConsumeAfterDelay(CardInstance cardInstance, float delaySeconds)
@@ -259,21 +429,49 @@ namespace RRaM.Core.Cards
         }
 
         [Server]
-        private bool TryResolveDrawCharacter(NetworkPlayerConnection player, BaseCard cardData, out NetworkCharacterPawn assignedCharacter)
+        private bool TryResolveTurnCharacter(NetworkPlayerConnection player, out NetworkCharacterPawn character)
         {
-            assignedCharacter = null;
-            if (player == null || cardData == null || CharacterManager.Instance == null)
+            character = null;
+            if (player == null || TurnManager.Instance == null || CharacterManager.Instance == null)
             {
                 return false;
             }
 
-            if (cardData.HandSlotMode == CardHandSlotMode.FixedCharacter &&
-                CharacterManager.Instance.TryGetServerCharacter(player, cardData.FixedHandCharacter, out assignedCharacter))
+            uint characterNetId = TurnManager.Instance.ActiveCharacterNetId != 0
+                ? TurnManager.Instance.ActiveCharacterNetId
+                : player.SelectedCharacterNetId;
+            if (!CharacterManager.Instance.TryGetServerCharacter(characterNetId, out character))
             {
-                return true;
+                return false;
             }
 
-            return CharacterManager.Instance.TryGetRandomActiveServerCharacter(player, out assignedCharacter);
+            return character.OwnerSlot == player.PlayerSlot;
+        }
+
+        [Server]
+        private static bool TryResolveDeckNode(NetworkCharacterPawn character, out string deckNodeId)
+        {
+            deckNodeId = string.Empty;
+            if (character == null ||
+                string.IsNullOrWhiteSpace(character.CurrentNodeId) ||
+                BoardGraph.Instance == null)
+            {
+                return false;
+            }
+
+            BoardGraph.Instance.EnsureInitialized();
+            if (!BoardGraph.Instance.TryGetNode(character.CurrentNodeId, out BoardNode node))
+            {
+                return false;
+            }
+
+            if (node.NodeKind != BoardNodeKind.GreenDeck && node.NodeKind != BoardNodeKind.RedDeck)
+            {
+                return false;
+            }
+
+            deckNodeId = node.NodeId;
+            return true;
         }
 
         [Server]
@@ -341,6 +539,7 @@ namespace RRaM.Core.Cards
                     DisplayName = card.Data.DisplayName,
                     IsConsumable = card.Data.isConsumable,
                     IsPlayable = card.Data.IsPlayable,
+                    MinimumDieValue = card.Data.MinimumDieValue,
                     HandSlotIndex = card.HandSlotIndex
                 });
             }

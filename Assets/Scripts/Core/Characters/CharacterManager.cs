@@ -108,7 +108,8 @@ namespace RRaM.Core.Characters
                 return false;
             }
 
-            if (pawn.OwnerSlot != player.PlayerSlot)
+            if (pawn.OwnerSlot != player.PlayerSlot ||
+                (TurnManager.Instance != null && !TurnManager.Instance.CanPlayerSelectCharacter(player.PlayerSlot, characterNetId)))
             {
                 return false;
             }
@@ -124,28 +125,19 @@ namespace RRaM.Core.Characters
         [Server]
         public bool ServerTrySelectCharacterAtNode(NetworkPlayerConnection player, string nodeId)
         {
-            if (player == null ||
-                string.IsNullOrWhiteSpace(nodeId) ||
-                !charactersByPlayerSlot.TryGetValue(player.PlayerSlot, out List<NetworkCharacterPawn> roster))
+            if (!TryGetOwnedCharacterAtNode(player, nodeId, out NetworkCharacterPawn pawn))
             {
                 return false;
             }
 
-            string normalizedNodeId = nodeId.Trim();
-            for (int i = 0; i < roster.Count; i++)
+            if (TurnManager.Instance != null && !TurnManager.Instance.CanPlayerSelectCharacter(player.PlayerSlot, pawn.netId))
             {
-                NetworkCharacterPawn pawn = roster[i];
-                if (pawn == null || pawn.netId == 0 || pawn.CurrentNodeId != normalizedNodeId)
-                {
-                    continue;
-                }
-
-                player.SetSelectedCharacter(pawn.netId);
-                SyncPlayerCharacters(player);
-                return true;
+                return false;
             }
 
-            return false;
+            player.SetSelectedCharacter(pawn.netId);
+            SyncPlayerCharacters(player);
+            return true;
         }
 
         /// <summary>
@@ -185,18 +177,31 @@ namespace RRaM.Core.Characters
                 return false;
             }
 
-            int moveBudget = TurnManager.Instance.GetRemainingMoveBudget();
-            BoardPathValidator validator = Match.MatchContext.Instance != null ? Match.MatchContext.Instance.BoardPathValidator : null;
-            if (validator == null)
+            if (TryGetOwnedCharacterAtNode(player, destinationNodeId, out NetworkCharacterPawn ownedOccupant) &&
+                ownedOccupant != null &&
+                ownedOccupant.netId != pawn.netId)
             {
-                Debug.LogWarning($"[Server] Movement rejected. BoardPathValidator missing. Slot={player.PlayerSlot}, Destination={destinationNodeId}");
+                if (TurnManager.Instance.CanPlayerSelectCharacter(player.PlayerSlot, ownedOccupant.netId))
+                {
+                    player.SetSelectedCharacter(ownedOccupant.netId);
+                    Debug.Log($"[Server] Movement converted to selection. Slot={player.PlayerSlot}, Destination={destinationNodeId}, SelectedCharacterNetId={ownedOccupant.netId}");
+                    return true;
+                }
+
+                Debug.LogWarning($"[Server] Movement rejected. Destination '{destinationNodeId}' is occupied by owned character NetId={ownedOccupant.netId}.");
                 return false;
             }
 
-            bool valid = validator.TryFindPathWithinRange(pawn.CurrentNodeId, destinationNodeId, moveBudget, out List<string> path);
-            if (!valid)
+            if (!TurnManager.Instance.ServerTryUseCharacterForCurrentTurn(player.PlayerSlot, pawn.netId))
             {
-                Debug.LogWarning($"[Server] Movement rejected. Path invalid. Slot={player.PlayerSlot}, CharacterNetId={pawn.netId}, From={pawn.CurrentNodeId}, Destination={destinationNodeId}, Budget={moveBudget}");
+                Debug.LogWarning($"[Server] Movement rejected. Turn is locked to another character. Slot={player.PlayerSlot}, CharacterNetId={pawn.netId}, ActiveCharacterNetId={TurnManager.Instance.ActiveCharacterNetId}");
+                return false;
+            }
+
+            int moveBudget = TurnManager.Instance.GetRemainingMoveBudget();
+            if (!TryResolveMovementPath(pawn.CurrentNodeId, destinationNodeId, moveBudget, out List<string> path, out string pathResolver))
+            {
+                Debug.LogWarning($"[Server] Movement rejected. Path invalid. Slot={player.PlayerSlot}, CharacterNetId={pawn.netId}, From={pawn.CurrentNodeId}, Destination={destinationNodeId}, Budget={moveBudget}, Resolver={pathResolver}");
                 return false;
             }
 
@@ -211,7 +216,7 @@ namespace RRaM.Core.Characters
             player.SetSelectedCharacter(pawn.netId);
             pawn.ServerSetCurrentNode(destinationNodeId);
             SyncPlayerCharacters(player);
-            Debug.Log($"[Server] Movement accepted. Slot={player.PlayerSlot}, CharacterNetId={pawn.netId}, From={originNodeId}, Destination={destinationNodeId}, UsedSteps={usedSteps}");
+            Debug.Log($"[Server] Movement accepted. Slot={player.PlayerSlot}, CharacterNetId={pawn.netId}, From={originNodeId}, Destination={destinationNodeId}, UsedSteps={usedSteps}, Resolver={pathResolver}");
             return true;
         }
 
@@ -279,6 +284,100 @@ namespace RRaM.Core.Characters
 
             pawn = activeCharacters[Random.Range(0, activeCharacters.Count)];
             return pawn != null;
+        }
+
+        [Server]
+        private bool TryGetOwnedCharacterAtNode(NetworkPlayerConnection player, string nodeId, out NetworkCharacterPawn pawn)
+        {
+            pawn = null;
+            if (player == null ||
+                string.IsNullOrWhiteSpace(nodeId) ||
+                !charactersByPlayerSlot.TryGetValue(player.PlayerSlot, out List<NetworkCharacterPawn> roster))
+            {
+                return false;
+            }
+
+            string normalizedNodeId = nodeId.Trim();
+            for (int i = 0; i < roster.Count; i++)
+            {
+                NetworkCharacterPawn candidate = roster[i];
+                if (candidate == null || candidate.netId == 0 || candidate.CurrentNodeId != normalizedNodeId)
+                {
+                    continue;
+                }
+
+                pawn = candidate;
+                return true;
+            }
+
+            return false;
+        }
+
+        private static bool TryResolveMovementPath(string startNodeId, string destinationNodeId, int moveBudget, out List<string> path, out string resolver)
+        {
+            path = new List<string>();
+            resolver = "none";
+
+            BoardPathValidator validator = ResolveBoardPathValidator();
+            if (validator != null)
+            {
+                resolver = "BoardPathValidator";
+                return validator.TryFindPathWithinRange(startNodeId, destinationNodeId, moveBudget, out path);
+            }
+
+            BoardGraph boardGraph = ResolveBoardGraph();
+            if (boardGraph == null ||
+                moveBudget < 0 ||
+                string.IsNullOrWhiteSpace(startNodeId) ||
+                string.IsNullOrWhiteSpace(destinationNodeId) ||
+                startNodeId == destinationNodeId ||
+                !boardGraph.TryGetNode(startNodeId, out _) ||
+                !boardGraph.TryGetNode(destinationNodeId, out _) ||
+                !boardGraph.TryGetShortestPath(startNodeId, destinationNodeId, out path))
+            {
+                resolver = boardGraph == null ? "BoardGraphMissing" : "BoardGraphFallback";
+                path.Clear();
+                return false;
+            }
+
+            int usedSteps = Mathf.Max(0, path.Count - 1);
+            if (usedSteps > moveBudget)
+            {
+                resolver = "BoardGraphFallback";
+                path.Clear();
+                return false;
+            }
+
+            resolver = "BoardGraphFallback";
+            return true;
+        }
+
+        private static BoardPathValidator ResolveBoardPathValidator()
+        {
+            if (Match.MatchContext.Instance != null && Match.MatchContext.Instance.BoardPathValidator != null)
+            {
+                return Match.MatchContext.Instance.BoardPathValidator;
+            }
+
+            return FindAnyObjectByType<BoardPathValidator>();
+        }
+
+        private static BoardGraph ResolveBoardGraph()
+        {
+            if (Match.MatchContext.Instance != null && Match.MatchContext.Instance.BoardGraph != null)
+            {
+                Match.MatchContext.Instance.BoardGraph.EnsureInitialized();
+                return Match.MatchContext.Instance.BoardGraph;
+            }
+
+            BoardGraph boardGraph = BoardGraph.Instance;
+            boardGraph ??= FindAnyObjectByType<BoardGraph>();
+            if (boardGraph != null)
+            {
+                boardGraph.EnsureInitialized();
+            }
+
+            return boardGraph;
         }
 
         private string ResolveStartNodeId(int playerSlot, CharacterType characterType)

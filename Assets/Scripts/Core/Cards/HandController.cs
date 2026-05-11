@@ -21,6 +21,41 @@ namespace RRaM.Core.Cards
             Instance = this;
         }
 
+        public static HandController Resolve(bool activateIfInactive)
+        {
+            if (Instance != null)
+            {
+                if (activateIfInactive && !Instance.gameObject.activeSelf)
+                {
+                    Instance.gameObject.SetActive(true);
+                }
+
+                return Instance;
+            }
+
+            HandController[] controllers = Resources.FindObjectsOfTypeAll<HandController>();
+            for (int i = 0; i < controllers.Length; i++)
+            {
+                HandController controller = controllers[i];
+                if (controller == null ||
+                    !controller.gameObject.scene.IsValid() ||
+                    !controller.gameObject.scene.isLoaded)
+                {
+                    continue;
+                }
+
+                if (activateIfInactive && !controller.gameObject.activeSelf)
+                {
+                    controller.gameObject.SetActive(true);
+                }
+
+                Instance = controller;
+                return controller;
+            }
+
+            return null;
+        }
+
         public void AddCard(CardInstance card, int characterIndex, bool animate = true)
         {
             if (card == null || !TryGetSlot(characterIndex, out Transform slot))
@@ -51,7 +86,17 @@ namespace RRaM.Core.Cards
                 return;
             }
 
-            string groupKey = GetGroupKey(card.OwnerPlayerSlot, card.HandSlotIndex);
+            RemoveCardFromSlot(card, card.OwnerPlayerSlot, card.HandSlotIndex);
+        }
+
+        public void RemoveCardFromSlot(CardInstance card, int ownerPlayerSlot, int characterIndex)
+        {
+            if (card == null)
+            {
+                return;
+            }
+
+            string groupKey = GetGroupKey(ownerPlayerSlot, characterIndex);
             if (!cardsByGroup.TryGetValue(groupKey, out List<CardInstance> stack))
             {
                 return;
@@ -90,6 +135,7 @@ namespace RRaM.Core.Cards
                 return;
             }
 
+            int layoutIndex = 0;
             for (int i = 0; i < stack.Count; i++)
             {
                 CardInstance card = stack[i];
@@ -98,8 +144,14 @@ namespace RRaM.Core.Cards
                     continue;
                 }
 
-                Vector3 localPosition = ResolveLocalPosition(ownerPlayerSlot, i);
+                if (card.IsInSelectionPanel)
+                {
+                    continue;
+                }
+
+                Vector3 localPosition = ResolveLocalPosition(ownerPlayerSlot, layoutIndex);
                 card.ApplyHandLayout(localPosition, Quaternion.Euler(cardEulerAngles), cardScale, animate);
+                layoutIndex++;
             }
         }
 
@@ -108,7 +160,7 @@ namespace RRaM.Core.Cards
             return (stackOffset * stackIndex) + (ownerLaneOffset * Mathf.Max(0, ownerPlayerSlot));
         }
 
-        private bool TryGetSlot(int characterIndex, out Transform slot)
+        public bool TryGetSlot(int characterIndex, out Transform slot)
         {
             if (characterSlots == null || characterIndex < 0 || characterIndex >= characterSlots.Length)
             {

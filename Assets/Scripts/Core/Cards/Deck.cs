@@ -13,7 +13,7 @@ namespace RRaM.Core.Cards
         [SerializeField] private List<BaseCard> cards = new();
 
         private readonly Dictionary<string, BaseCard> cardsById = new();
-        private readonly Queue<BaseCard> runtimeDeck = new();
+        private readonly List<BaseCard> runtimeDeck = new();
 
         public CardInstance CardPrefab => cardPrefab;
         public Transform DrawOrigin => drawOrigin != null ? drawOrigin : transform;
@@ -42,14 +42,21 @@ namespace RRaM.Core.Cards
             {
                 if (cards[i] != null)
                 {
-                    runtimeDeck.Enqueue(cards[i]);
+                    runtimeDeck.Add(cards[i]);
                 }
             }
         }
 
         public BaseCard Draw()
         {
-            return runtimeDeck.Count > 0 ? runtimeDeck.Dequeue() : null;
+            if (runtimeDeck.Count == 0)
+            {
+                return null;
+            }
+
+            BaseCard card = runtimeDeck[0];
+            runtimeDeck.RemoveAt(0);
+            return card;
         }
 
         public bool TryDraw(out BaseCard card)
@@ -67,6 +74,17 @@ namespace RRaM.Core.Cards
             }
 
             return cardsById.TryGetValue(cardId.Trim(), out card);
+        }
+
+        public void ReturnCardAndShuffle(BaseCard card)
+        {
+            if (card == null)
+            {
+                return;
+            }
+
+            runtimeDeck.Add(card);
+            ShuffleRuntimeDeck();
         }
 
         private void RebuildCatalog()
@@ -92,6 +110,15 @@ namespace RRaM.Core.Cards
                 }
 
                 cardsById[cardId] = card;
+            }
+        }
+
+        private void ShuffleRuntimeDeck()
+        {
+            for (int i = runtimeDeck.Count - 1; i > 0; i--)
+            {
+                int swapIndex = Random.Range(0, i + 1);
+                (runtimeDeck[i], runtimeDeck[swapIndex]) = (runtimeDeck[swapIndex], runtimeDeck[i]);
             }
         }
 

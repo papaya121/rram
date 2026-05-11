@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.EventSystems;
 using UnityEngine.InputSystem;
@@ -7,6 +8,8 @@ namespace RRaM.Core.Cards
     [RequireComponent(typeof(CardInstance))]
     public sealed class CardInteraction : MonoBehaviour
     {
+        private static readonly List<RaycastResult> UiRaycastResults = new();
+
         private CardInstance card;
 
         private void Awake()
@@ -26,7 +29,7 @@ namespace RRaM.Core.Cards
 
         private void OnMouseDown()
         {
-            if (IsPointerOverHud())
+            if (IsPointerBlockedByHud())
             {
                 return;
             }
@@ -34,13 +37,13 @@ namespace RRaM.Core.Cards
             Mouse mouse = Mouse.current;
             if (mouse == null)
             {
-                card?.TryUseFromLocalClient();
+                OpenSelection();
             }
         }
 
         private void OnMouseOver()
         {
-            if (IsPointerOverHud())
+            if (IsPointerBlockedByHud())
             {
                 return;
             }
@@ -53,17 +56,50 @@ namespace RRaM.Core.Cards
 
             if (mouse.leftButton.wasPressedThisFrame)
             {
-                card?.TryUseFromLocalClient();
+                OpenSelection();
             }
             else if (mouse.rightButton.wasPressedThisFrame)
             {
-                card?.TryDiscardFromLocalClient();
+                OpenSelection();
             }
         }
 
-        private static bool IsPointerOverHud()
+        private void OpenSelection()
         {
-            return EventSystem.current != null && EventSystem.current.IsPointerOverGameObject();
+            if (card == null)
+            {
+                return;
+            }
+
+            CardSelectionPanel.EnsureInitialized().Show(card);
+        }
+
+        private bool IsPointerBlockedByHud()
+        {
+            if (EventSystem.current == null || Mouse.current == null)
+            {
+                return false;
+            }
+
+            PointerEventData pointerData = new(EventSystem.current)
+            {
+                position = Mouse.current.position.ReadValue()
+            };
+
+            UiRaycastResults.Clear();
+            EventSystem.current.RaycastAll(pointerData, UiRaycastResults);
+            for (int i = 0; i < UiRaycastResults.Count; i++)
+            {
+                GameObject hitObject = UiRaycastResults[i].gameObject;
+                if (hitObject != null && !hitObject.transform.IsChildOf(transform))
+                {
+                    UiRaycastResults.Clear();
+                    return true;
+                }
+            }
+
+            UiRaycastResults.Clear();
+            return false;
         }
     }
 }

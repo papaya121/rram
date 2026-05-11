@@ -13,6 +13,18 @@ MonoBehaviour:
   m_Name: MatchPrototypeConfig
   m_EditorClassIdentifier: Assembly-CSharp::RRaM.Core.Data.MatchPrototypeConfig
   setupTurnsPerPlayer: 10
+  dwarfTurnsAfterSetup: 10
   dwarfStepPerTurn: 1
+  starterCards:
+  - card: {fileID: 11400000, guid: decd48ae50344f5a8efdf11a0de64361, type: 2}
+    assignedCharacter: 0
+  - card: {fileID: 11400000, guid: fd5fbe541ca14db98e9871fb4acef729, type: 2}
+    assignedCharacter: 1
+  - card: {fileID: 11400000, guid: 305cbb6da65a4f299dbb70af3e9d4fb0, type: 2}
+    assignedCharacter: 2
+  - card: {fileID: 11400000, guid: 6bc29cda6841408f8221e027f4cc05de, type: 2}
+    assignedCharacter: 3
+  - card: {fileID: 11400000, guid: 8e3f47c8c15945d09c3913aa00b9c7a1, type: 2}
+    assignedCharacter: 4
   networkPort: 7777
   defaultAddress: localhost

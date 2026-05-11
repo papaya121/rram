@@ -1,5 +1,6 @@
 using Mirror;
 using RRaM.Core.Characters;
+using RRaM.Core.Turns;
 using UnityEngine;
 
 namespace RRaM.Core.Networking
@@ -42,8 +43,7 @@ namespace RRaM.Core.Networking
         public void Initialize(NetworkPlayerConnection player)
         {
             Player = player;
-            PredictedSelectedCharacterNetId = player != null ? player.SelectedCharacterNetId : 0;
-            PredictedSelectedCharacter = default;
+            ApplyAuthoritativeSelectedCharacter(player != null ? player.SelectedCharacterNetId : 0);
             Instance = this;
         }
 
@@ -60,9 +60,14 @@ namespace RRaM.Core.Networking
         /// </summary>
         public void SelectCharacter(uint characterNetId)
         {
+            if (Player == null || !CanSelectCharacterNow(characterNetId))
+            {
+                return;
+            }
+
             PredictedSelectedCharacterNetId = characterNetId;
             PredictedSelectedCharacter = ResolveOwnedCharacterSnapshot(characterNetId);
-            Player?.CmdSelectCharacter(characterNetId);
+            Player.CmdSelectCharacter(characterNetId);
         }
 
         /// <summary>
@@ -70,8 +75,18 @@ namespace RRaM.Core.Networking
         /// </summary>
         public void SelectCharacterAtNode(string nodeId, uint predictedCharacterNetId = 0, CharacterSnapshot predictedCharacter = default)
         {
+            if (Player == null)
+            {
+                return;
+            }
+
             if (predictedCharacterNetId != 0)
             {
+                if (!CanSelectCharacterNow(predictedCharacterNetId))
+                {
+                    return;
+                }
+
                 PredictedSelectedCharacterNetId = predictedCharacterNetId;
             }
 
@@ -80,7 +95,7 @@ namespace RRaM.Core.Networking
                 PredictedSelectedCharacter = predictedCharacter;
             }
 
-            Player?.CmdSelectCharacterAtNode(nodeId);
+            Player.CmdSelectCharacterAtNode(nodeId);
         }
 
         public CharacterSnapshot ResolveOwnedCharacterSnapshot(uint characterNetId)
@@ -147,6 +162,14 @@ namespace RRaM.Core.Networking
         }
 
         /// <summary>
+        /// Requests transferring a card to another owned character.
+        /// </summary>
+        public void TransferCard(uint cardNetId, uint targetCharacterNetId)
+        {
+            Player?.CmdTransferCard(cardNetId, targetCharacterNetId);
+        }
+
+        /// <summary>
         /// Sends an end turn request to the server.
         /// </summary>
         public void EndTurn()
@@ -162,12 +185,26 @@ namespace RRaM.Core.Networking
             Player?.CmdSendChatMessage(message);
         }
 
+        public void ApplyAuthoritativeSelectedCharacter(uint characterNetId)
+        {
+            PredictedSelectedCharacterNetId = characterNetId;
+            PredictedSelectedCharacter = characterNetId != 0
+                ? ResolveOwnedCharacterSnapshot(characterNetId)
+                : default;
+        }
+
         private void OnDestroy()
         {
             if (Instance == this)
             {
                 Instance = null;
             }
+        }
+
+        private bool CanSelectCharacterNow(uint characterNetId)
+        {
+            return TurnManager.Instance == null ||
+                   TurnManager.Instance.CanPlayerSelectCharacter(Player.PlayerSlot, characterNetId);
         }
     }
 }

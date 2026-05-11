@@ -9,6 +9,7 @@ namespace RRaM.Core.Cards
         public string DisplayName;
         public bool IsConsumable;
         public bool IsPlayable;
+        public int MinimumDieValue;
         public int HandSlotIndex;
     }
 }

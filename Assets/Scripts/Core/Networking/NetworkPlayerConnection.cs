@@ -33,7 +33,7 @@ namespace RRaM.Core.Networking
         [SyncVar] public int PlayerSlot;
         [SyncVar] public string DisplayName;
         [SyncVar(hook = nameof(OnReadyChanged))] public bool IsReady;
-        [SyncVar] public uint SelectedCharacterNetId;
+        [SyncVar(hook = nameof(OnSelectedCharacterChanged))] public uint SelectedCharacterNetId;
 
         private const int MaxChatHistoryEntries = 32;
         private static readonly List<ChatEntry> chatHistory = new();
@@ -198,6 +198,15 @@ namespace RRaM.Core.Networking
         }
 
         /// <summary>
+        /// Requests transferring a card from the active character to another owned character.
+        /// </summary>
+        [Command]
+        public void CmdTransferCard(uint cardNetId, uint targetCharacterNetId)
+        {
+            global::RRaM.Core.Cards.CardManager.Instance?.ServerTryTransferOwnedCard(this, cardNetId, targetCharacterNetId);
+        }
+
+        /// <summary>
         /// Requests turn completion on the server.
         /// </summary>
         [Command]
@@ -241,6 +250,17 @@ namespace RRaM.Core.Networking
         }
 
         private void OnReadyChanged(bool oldValue, bool newValue) { }
+
+        private void OnSelectedCharacterChanged(uint oldValue, uint newValue)
+        {
+            if (!isLocalPlayer)
+            {
+                return;
+            }
+
+            LocalPlayerController controller = GetComponent<LocalPlayerController>();
+            controller?.ApplyAuthoritativeSelectedCharacter(newValue);
+        }
 
         public static void ResetLocalChatState()
         {

@@ -457,7 +457,7 @@ MonoBehaviour:
   title: {fileID: 7977016365206844374}
   canvasRoot: {fileID: 1405114533942465157}
   hiddenImage: {fileID: 21300000, guid: 077b16c1cf6ac40428dfd38f6a556223, type: 3}
-  hiddenTitle: "\u0421\u043A\u0440\u044B\u0442\u0430\u044F \u043A\u0430\u0440\u0442\u0430"
+  hiddenTitle: 
   overrideSorting: 1
   sortingOrder: 10
   canvasLocalPositionOffset: {x: 0, y: 0, z: 0}
@@ -501,7 +501,7 @@ MonoBehaviour:
     m_PreInfinity: 2
     m_PostInfinity: 2
     m_RotationOrder: 4
-  hoverOffset: {x: 0, y: 0, z: 0.06}
+  hoverOffset: {x: 0, y: 0, z: 0.012}
   useOffset: {x: 0, y: 0.35, z: 0}
   useScaleMultiplier: {x: 1.15, y: 1.15, z: 1.15}
 --- !u!114 &8137569414367684643

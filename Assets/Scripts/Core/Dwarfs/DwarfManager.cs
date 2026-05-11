@@ -14,6 +14,7 @@ namespace RRaM.Core.Dwarfs
         public static DwarfManager Instance { get; private set; }
 
         [SyncVar] public bool DwarfsSpawned;
+        [SyncVar] public int DwarfTurnsResolved;
 
         private readonly List<NetworkDwarfPawn> dwarfs = new();
         private readonly Dictionary<uint, List<string>> routesByNetId = new();
@@ -47,13 +48,14 @@ namespace RRaM.Core.Dwarfs
             dwarfs.Clear();
             routesByNetId.Clear();
             DwarfsSpawned = false;
+            DwarfTurnsResolved = 0;
         }
 
         /// <summary>
         /// Handles the transition from setup turns into the dwarf phase.
         /// </summary>
         [Server]
-        public void ServerResolveSetupPhaseCompleted()
+        public void ServerResolveSetupPhaseCompleted(int dwarfTurnCount)
         {
             Match.MatchContext context = Match.MatchContext.Instance;
             if (context == null || context.Config == null || BoardGraph.Instance == null)
@@ -68,23 +70,13 @@ namespace RRaM.Core.Dwarfs
 
             if (DwarfsSpawned)
             {
-                ServerAdvanceDwarfs(context.Config.DwarfStepPerTurn);
+                int turnsToResolve = Mathf.Max(1, dwarfTurnCount);
+                for (int i = 0; i < turnsToResolve; i++)
+                {
+                    ServerAdvanceDwarfs(context.Config.DwarfStepPerTurn);
+                    DwarfTurnsResolved++;
+                }
             }
-        }
-
-        /// <summary>
-        /// Advances dwarfs after a regular alternating turn is completed.
-        /// </summary>
-        [Server]
-        public void ServerHandleTurnCompleted()
-        {
-            Match.MatchContext context = Match.MatchContext.Instance;
-            if (!DwarfsSpawned || context == null || context.Config == null)
-            {
-                return;
-            }
-
-            ServerAdvanceDwarfs(context.Config.DwarfStepPerTurn);
         }
 
         [Server]

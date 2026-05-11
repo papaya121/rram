@@ -55,6 +55,7 @@ namespace RRaM.Core.Board
 
             AutoBindOccupancyReferences();
             CleanupLegacySelectionOutline();
+            ApplyBaseVisualState();
         }
 
         [ContextMenu("Use GameObject Name As Id")]
@@ -206,13 +207,20 @@ namespace RRaM.Core.Board
 
         private void ApplyBaseVisualState()
         {
+            TMP_Text text = ResolveOccupancyText();
+            if (text != null && !occupied)
+            {
+                text.text = string.Empty;
+            }
+
             GameObject visual = ResolveOccupancyVisual();
             if (visual == null)
             {
                 return;
             }
 
-            bool shouldShow = occupied || selected;
+            bool hasSpecialNodeColor = BoardNodeVisualUtility.TryGetSpecialNodeColor(nodeKind, out Color nodeKindColor);
+            bool shouldShow = occupied || selected || hasSpecialNodeColor;
             EnsureActive(visual);
 
             Renderer[] renderers = ResolveOccupancyRenderers();
@@ -221,7 +229,7 @@ namespace RRaM.Core.Board
                 return;
             }
 
-            Color baseColor = selected ? SelectedColor : occupancyColor;
+            Color baseColor = selected ? SelectedColor : occupied ? occupancyColor : nodeKindColor;
             ApplyRendererState(renderers, shouldShow, baseColor);
         }
 

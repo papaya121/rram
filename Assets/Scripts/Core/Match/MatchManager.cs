@@ -174,15 +174,16 @@ namespace RRaM.Core.Match
                 }
 
                 State = MatchState.ResolvingDwarfs;
-                dwarfManager.ServerResolveSetupPhaseCompleted();
+                int dwarfTurns = MatchContext.Instance != null && MatchContext.Instance.Config != null
+                    ? MatchContext.Instance.Config.DwarfTurnsAfterSetup
+                    : 10;
+                dwarfManager.ServerResolveSetupPhaseCompleted(dwarfTurns);
                 turnManager.ServerBeginAlternatingPhase();
                 State = MatchState.PlayerTurn;
                 return;
             }
 
             StarterTurnsElapsed = completedTurns;
-            State = MatchState.ResolvingDwarfs;
-            dwarfManager.ServerHandleTurnCompleted();
             State = MatchState.PlayerTurn;
         }
 
