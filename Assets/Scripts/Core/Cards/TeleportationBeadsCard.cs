@@ -19,7 +19,7 @@ namespace RRaM.Core.Cards
 
         public override void Use(CardContext context)
         {
-            if (!CanUse(context))
+            if (context?.character == null || context.character.IsDead)
             {
                 return;
             }

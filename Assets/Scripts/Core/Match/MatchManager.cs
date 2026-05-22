@@ -17,6 +17,7 @@ namespace RRaM.Core.Match
 
         [SyncVar] public MatchState State = MatchState.Bootstrapping;
         [SyncVar] public int StarterTurnsElapsed;
+        [SyncVar] public int WinningPlayerSlot = -1;
 
         private readonly List<Networking.NetworkPlayerConnection> players = new();
         private TurnManager turnManager;
@@ -144,6 +145,7 @@ namespace RRaM.Core.Match
         {
             State = MatchState.Lobby;
             StarterTurnsElapsed = 0;
+            WinningPlayerSlot = -1;
 
             for (int i = 0; i < players.Count; i++)
             {
@@ -185,6 +187,68 @@ namespace RRaM.Core.Match
 
             StarterTurnsElapsed = completedTurns;
             State = MatchState.PlayerTurn;
+        }
+
+        [Server]
+        public void ServerCheckEliminationVictory()
+        {
+            if (State == MatchState.Completed || players.Count < 2 || characterManager == null)
+            {
+                return;
+            }
+
+            Networking.NetworkPlayerConnection eliminatedPlayer = null;
+            for (int i = 0; i < players.Count; i++)
+            {
+                Networking.NetworkPlayerConnection player = players[i];
+                if (player != null && !HasLivingCharacters(player))
+                {
+                    eliminatedPlayer = player;
+                    break;
+                }
+            }
+
+            if (eliminatedPlayer == null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < players.Count; i++)
+            {
+                Networking.NetworkPlayerConnection winner = players[i];
+                if (winner != null && winner.PlayerSlot != eliminatedPlayer.PlayerSlot)
+                {
+                    WinningPlayerSlot = winner.PlayerSlot;
+                    State = MatchState.Completed;
+                    return;
+                }
+            }
+        }
+
+        [Server]
+        private bool HasLivingCharacters(Networking.NetworkPlayerConnection player)
+        {
+            if (player == null)
+            {
+                return false;
+            }
+
+            for (int i = 0; i < player.Characters.Count; i++)
+            {
+                CharacterSnapshot snapshot = player.Characters[i];
+                if (snapshot.NetId == 0 ||
+                    !characterManager.TryGetServerCharacter(snapshot.NetId, out NetworkCharacterPawn pawn))
+                {
+                    continue;
+                }
+
+                if (!pawn.IsDead)
+                {
+                    return true;
+                }
+            }
+
+            return false;
         }
 
         private void OnDestroy()

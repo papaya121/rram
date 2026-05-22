@@ -113,6 +113,7 @@ namespace RRaM.Core.UI
 
         private void DrawGameplayInfoToggle()
         {
+            GUILayout.Space(10f);
             string buttonText = isDebugVisible ? "Скрыть debug" : "Показать debug";
             if (DrawCenteredButton(buttonText))
             {
@@ -149,7 +150,7 @@ namespace RRaM.Core.UI
 
         private void DrawConnectionBlock()
         {
-            DrawWrappedLabel("Подключение");
+            DrawWrappedLabel(!NetworkClient.active && !NetworkServer.active ? "Подключение" : "Сеть");
             if (!NetworkClient.active && !NetworkServer.active)
             {
                 connectionTarget = (ConnectionTarget)GUILayout.Toolbar((int)connectionTarget, new[] { "Localhost", "VPS" }, GUILayout.Width(GetButtonWidth()));
@@ -227,6 +228,10 @@ namespace RRaM.Core.UI
             GUILayout.Space(8f);
             DrawWrappedLabel("Лобби");
             DrawWrappedLabel($"Состояние: {DescribeMatchState(matchManager.State)}");
+            if (matchManager.State == MatchState.Completed && matchManager.WinningPlayerSlot >= 0)
+            {
+                DrawWrappedLabel($"Победитель: Игрок {matchManager.WinningPlayerSlot + 1}");
+            }
 
             if (matchManager.State == MatchState.Lobby)
             {
@@ -264,15 +269,20 @@ namespace RRaM.Core.UI
                 GUILayout.Space(10f);
                 GUILayout.BeginHorizontal();
                 GUILayout.FlexibleSpace();
-                GUI.enabled = turnManager.CanPlayerRoll(localPlayerSlot);
-                if (GUILayout.Button("Бросить кубики", wrappedButtonStyle, GUILayout.Width(GetSplitButtonWidth()), GUILayout.MinHeight(34f)))
+                if (!turnManager.IsSetupPhase)
                 {
-                    RequestRollDice();
+                    GUI.enabled = turnManager.CanPlayerRoll(localPlayerSlot);
+                    if (GUILayout.Button("Бросить кубики", wrappedButtonStyle, GUILayout.Width(GetSplitButtonWidth()), GUILayout.MinHeight(34f)))
+                    {
+                        RequestRollDice();
+                    }
+
+                    GUILayout.Space(6f);
                 }
 
-                GUILayout.Space(6f);
                 GUI.enabled = turnManager.CanPlayerEndTurn(localPlayerSlot);
-                if (GUILayout.Button("Завершить ход", wrappedButtonStyle, GUILayout.Width(GetSplitButtonWidth()), GUILayout.MinHeight(34f)))
+                string endTurnLabel = turnManager.IsSetupPhase ? "Готов" : "Завершить ход";
+                if (GUILayout.Button(endTurnLabel, wrappedButtonStyle, GUILayout.Width(GetSplitButtonWidth()), GUILayout.MinHeight(34f)))
                 {
                     local.EndTurn();
                 }
@@ -312,14 +322,21 @@ namespace RRaM.Core.UI
             DrawWrappedLabel(DescribeDwarfCountdown(matchManager));
             DrawWrappedLabel(GetActionHint(local, turnManager, diceManager));
             GUILayout.Space(4f);
-            DrawWrappedLabel("Публичный бросок кубиков");
-            DrawWrappedLabel(DescribeDice(diceManager, localPlayerSlot));
-            if (!canActNow)
+            if (!turnManager.IsSetupPhase)
             {
-                DrawWrappedLabel("Это общий результат матча. Его видят оба игрока.");
+                DrawWrappedLabel("Публичный бросок кубиков");
+                DrawWrappedLabel(DescribeDice(diceManager, localPlayerSlot));
+                if (!canActNow)
+                {
+                    DrawWrappedLabel("Это общий результат матча. Его видят оба игрока.");
+                }
             }
 
-            DrawWrappedLabel($"Неиспользованных действий кубиков: {turnManager.GetRemainingDieActions()}");
+            if (!turnManager.IsSetupPhase)
+            {
+                DrawWrappedLabel($"Неиспользованных действий кубиков: {turnManager.GetRemainingDieActions()}");
+            }
+
             if (turnManager.GetRemainingCardTransfers() > 0)
             {
                 DrawWrappedLabel($"Оставшихся передач карт: {turnManager.GetRemainingCardTransfers()}");
@@ -372,14 +389,16 @@ namespace RRaM.Core.UI
             for (int i = 0; i < ownedCharacters.Count; i++)
             {
                 CharacterSnapshot character = ownedCharacters[i];
-                GUI.enabled = isMyTurn &&
+                GUI.enabled = !character.IsDead &&
+                              isMyTurn &&
                               (TurnManager.Instance == null ||
                                TurnManager.Instance.CanPlayerSelectCharacter(local.Player.PlayerSlot, character.NetId));
                 bool isSelected = local.Player.SelectedCharacterNetId == character.NetId;
                 string nodeLabel = BoardNodeDisplayUtility.GetDisplayName(character.CurrentNodeId);
+                string healthLabel = character.IsDead ? "мертв" : $"{character.Health}/100";
                 string label = isSelected
-                    ? $"[{character.DisplayName}] {nodeLabel}"
-                    : $"{character.DisplayName} - {nodeLabel}";
+                    ? $"[{character.DisplayName}] {nodeLabel} HP {healthLabel}"
+                    : $"{character.DisplayName} - {nodeLabel} HP {healthLabel}";
                 if (DrawCenteredButton(label))
                 {
                     local.SelectCharacter(character.NetId);
@@ -453,15 +472,25 @@ namespace RRaM.Core.UI
             }
 
             GUI.enabled = true;
-            if (local.Player.Cards.Count == 0)
+            uint visibleCharacterNetId = ResolveActionCharacterNetId(local);
+            if (visibleCharacterNetId == 0)
             {
-                DrawWrappedLabel("В руке пока пусто.");
+                DrawWrappedLabel("Выберите персонажа, чтобы увидеть его карты.");
                 return;
             }
 
-            for (int i = 0; i < local.Player.Cards.Count; i++)
+            List<CardSnapshot> visibleCards = local.Player.Cards
+                .Where(card => card.AssignedCharacterNetId == visibleCharacterNetId)
+                .ToList();
+            if (visibleCards.Count == 0)
             {
-                CardSnapshot card = local.Player.Cards[i];
+                DrawWrappedLabel("У выбранного персонажа пока нет карт.");
+                return;
+            }
+
+            for (int i = 0; i < visibleCards.Count; i++)
+            {
+                CardSnapshot card = visibleCards[i];
                 bool canPlayCard = CanPlayCard(local, isMyTurn, card);
                 string label = card.IsPlayable
                     ? $"{card.DisplayName} ({DescribeHandSlot(card.HandSlotIndex)})"
@@ -526,7 +555,7 @@ namespace RRaM.Core.UI
         {
             if (Board.BoardGraph.Instance == null ||
                 local.Player.SelectedCharacterNetId == 0 ||
-                diceManager.Total <= 0)
+                (!turnManager.IsSetupPhase && diceManager.Total <= 0))
             {
                 return;
             }
@@ -537,18 +566,31 @@ namespace RRaM.Core.UI
                 return;
             }
 
-            int moveBudget = turnManager.GetCurrentMoveBudget();
-            int remainingMoveBudget = turnManager.GetRemainingMoveBudget();
+            int localPlayerSlot = local.Player.PlayerSlot;
+            int moveBudget = turnManager.GetCurrentMoveBudget(localPlayerSlot);
+            int remainingMoveBudget = turnManager.GetRemainingMoveBudget(localPlayerSlot);
             GUILayout.Space(4f);
-            DrawWrappedLabel($"Перемещение: зелёный до {turnManager.GetPrimaryMoveBudget()} шагов, жёлтый до {remainingMoveBudget} из {moveBudget}.");
+            if (turnManager.IsSetupPhase)
+            {
+                DrawWrappedLabel($"Стартовое перемещение: осталось {remainingMoveBudget} из {turnManager.SetupTurnsPerPlayer} шагов. Их можно распределить между любыми персонажами.");
+            }
+            else
+            {
+                DrawWrappedLabel($"Перемещение: зелёный до {turnManager.GetPrimaryMoveBudget()} шагов, жёлтый до {remainingMoveBudget} из {moveBudget}.");
+            }
+
             if (!turnManager.CanPlayerMove(local.Player.PlayerSlot))
             {
-                DrawWrappedLabel("Бросьте кубики, выберите персонажа или используйте оставшееся действие кубика.");
+                DrawWrappedLabel(turnManager.IsSetupPhase
+                    ? "Выберите персонажа или завершите стартовую расстановку."
+                    : "Бросьте кубики, выберите персонажа или используйте оставшееся действие кубика.");
                 return;
             }
 
             List<string> destinations = Board.BoardGraph.Instance.GetReachableDestinations(selected.CurrentNodeId, remainingMoveBudget);
-            DrawWrappedLabel("Наводите курсор на узлы поля: зелёный тратит первый кубик, жёлтый тратит оба, красный недоступен.");
+            DrawWrappedLabel(turnManager.IsSetupPhase
+                ? "Наводите курсор на узлы поля: зелёные точки доступны в пределах стартового пула, красные недоступны."
+                : "Наводите курсор на узлы поля: зелёный тратит первый кубик, жёлтый тратит оба, красный недоступен.");
             DrawWrappedLabel($"Доступных точек назначения сейчас: {destinations.Count}.");
         }
 
@@ -557,7 +599,7 @@ namespace RRaM.Core.UI
             GUILayout.Space(8f);
             DrawWrappedLabel("Техническая информация");
             DrawWrappedLabel($"Match State: {MatchManager.Instance?.State}");
-            DrawWrappedLabel($"Starter Turns: {MatchManager.Instance?.StarterTurnsElapsed ?? 0}");
+            DrawWrappedLabel($"Starter Setup Segments: {MatchManager.Instance?.StarterTurnsElapsed ?? 0}");
             DrawWrappedLabel($"Dwarfs Spawned: {Dwarfs.DwarfManager.Instance != null && Dwarfs.DwarfManager.Instance.DwarfsSpawned}");
             DrawWrappedLabel($"Dwarf Turns Resolved: {Dwarfs.DwarfManager.Instance?.DwarfTurnsResolved ?? 0}");
             DrawWrappedLabel($"Spawned Characters: {cachedCharacterCount}");
@@ -830,8 +872,8 @@ namespace RRaM.Core.UI
                 return "Дварфы уже вышли и участвуют в матче";
             }
 
-            int remainingTurns = turnManager.GetRemainingSetupTurns(0) + turnManager.GetRemainingSetupTurns(1);
-            return $"До выхода дварфов осталось стартовых ходов: {remainingTurns}";
+            int remainingSteps = turnManager.GetRemainingSetupTurns(0) + turnManager.GetRemainingSetupTurns(1);
+            return $"До выхода дварфов осталось распределить стартовых шагов: {remainingSteps}";
         }
 
         private static string DescribeDice(DiceManager diceManager, int localPlayerSlot)
@@ -859,7 +901,8 @@ namespace RRaM.Core.UI
                 CharacterSnapshot selected = player.Characters[i];
                 if (selected.NetId == player.SelectedCharacterNetId)
                 {
-                    return $"Выбран: {selected.DisplayName} ({BoardNodeDisplayUtility.GetDisplayName(selected.CurrentNodeId)})";
+                    string health = selected.IsDead ? "мертв" : $"{selected.Health}/100";
+                    return $"Выбран: {selected.DisplayName} ({BoardNodeDisplayUtility.GetDisplayName(selected.CurrentNodeId)}, HP {health})";
                 }
             }
 
@@ -884,20 +927,28 @@ namespace RRaM.Core.UI
             int localPlayerSlot = local.Player.PlayerSlot;
             if (!turnManager.CanPlayerAct(localPlayerSlot))
             {
+                if (turnManager.IsSetupPhase)
+                {
+                    return turnManager.GetRemainingSetupTurns(localPlayerSlot) <= 0
+                        ? "Вы завершили стартовую расстановку. Ждите готовности соперника."
+                        : "Стартовая расстановка: выберите персонажа и распределите свои шаги.";
+                }
+
                 return "Сейчас ход соперника. Ждите его действий.";
             }
 
             return turnManager.CurrentPhase switch
             {
                 TurnPhase.WaitingForRoll => turnManager.IsSetupPhase
-                    ? "Стартовая фаза: бросьте кубики, затем выберите персонажа для хода."
+                    ? "Стартовая фаза: выберите персонажа и распределите стартовые шаги."
                     : "Ваш ход: бросьте кубики, затем выберите персонажа.",
                 TurnPhase.WaitingForMove when local.Player.SelectedCharacterNetId == 0 => "Сначала выберите персонажа.",
-                TurnPhase.WaitingForMove when !diceManager.HasRolled => "Сначала бросьте кубики.",
+                TurnPhase.WaitingForMove when !turnManager.IsSetupPhase && !diceManager.HasRolled => "Сначала бросьте кубики.",
+                TurnPhase.WaitingForMove when turnManager.IsSetupPhase => "Стартовая фаза: распределите 10 шагов между своими персонажами. Персонажа можно менять после каждого перемещения.",
                 TurnPhase.WaitingForMove when turnManager.HasMovedThisTurn && turnManager.GetRemainingMoveBudget() > 0 => "Можно продолжать движение только тем персонажем, который уже начал ходить, либо завершить ход.",
                 TurnPhase.WaitingForMove => "Можно действовать выбранным персонажем: перемещаться, брать карту, использовать карту или передавать карты.",
                 TurnPhase.WaitingForEndTurn => turnManager.IsSetupPhase
-                    ? "Стартовый ход завершен. Можно закончить ход."
+                    ? "Стартовые шаги распределены. Завершите стартовую расстановку."
                     : "Ваш ход: перемещение завершено, можно завершать ход.",
                 _ => "Следуйте текущей фазе хода."
             };
@@ -911,7 +962,7 @@ namespace RRaM.Core.UI
             }
 
             int opponentSlot = localPlayerSlot == 0 ? 1 : 0;
-            return $"Стартовые ходы: у вас {turnManager.GetRemainingSetupTurns(localPlayerSlot)}, у соперника {turnManager.GetRemainingSetupTurns(opponentSlot)}.";
+            return $"Стартовые шаги: у вас {turnManager.GetRemainingSetupTurns(localPlayerSlot)}, у соперника {turnManager.GetRemainingSetupTurns(opponentSlot)}.";
         }
 
         private static string GetTurnWord(int value)
@@ -941,7 +992,53 @@ namespace RRaM.Core.UI
             return card.NetId != 0 &&
                    card.IsPlayable &&
                    TurnManager.Instance.CanPlayerSelectCharacter(local.Player.PlayerSlot, card.AssignedCharacterNetId) &&
-                   TurnManager.Instance.CanPlayerSpendDieActionWithMinimum(local.Player.PlayerSlot, card.MinimumDieValue);
+                   TurnManager.Instance.CanPlayerSpendDieActionWithMinimum(local.Player.PlayerSlot, card.MinimumDieValue) &&
+                   HasLocalCardRequirements(local.Player, card);
+        }
+
+        private static bool HasLocalCardRequirements(NetworkPlayerConnection player, CardSnapshot card)
+        {
+            if (player == null)
+            {
+                return false;
+            }
+
+            return card.CardId switch
+            {
+                "BagCard" => CountLocalCards(player, "DirtyMixedIronOreCard") >= 3 ||
+                             CountLocalCards(player, "GoldNuggetCard") >= 1,
+                "BagRecipeCard" => CountLocalCards(player, "CleanedRamHideCard") >= 1 &&
+                                   CountLocalCards(player, "RamWoolThreadBallCard") >= 1 &&
+                                   CountLocalCards(player, "ShamanCarpetCard") >= 1,
+                "BowRecipeCard" => CountLocalCards(player, "FlexibleStickCard") >= 1 &&
+                                   CountLocalCards(player, "RamWoolThreadBallCard") >= 1,
+                "ClubBlueprintCard" => CountLocalCards(player, "BearHideCard") >= 1 ||
+                                       CountLocalCards(player, "RamHideCard") >= 1,
+                "HammerBlueprintCard" => CountLocalCards(player, "MixedIronOreCard") >= 1,
+                "ShamanCarpetRecipeCard" => CountLocalCards(player, "BearHideCard") >= 1 &&
+                                            CountLocalCards(player, "RamHideThreadCard") >= 1,
+                _ => true
+            };
+        }
+
+        private static int CountLocalCards(NetworkPlayerConnection player, string cardId)
+        {
+            if (player == null || string.IsNullOrWhiteSpace(cardId))
+            {
+                return 0;
+            }
+
+            int count = 0;
+            for (int i = 0; i < player.Cards.Count; i++)
+            {
+                CardSnapshot candidate = player.Cards[i];
+                if (candidate.CardId == cardId)
+                {
+                    count++;
+                }
+            }
+
+            return count;
         }
 
         private static bool CanDrawCard(LocalPlayerController local, bool isMyTurn)
@@ -1000,6 +1097,7 @@ namespace RRaM.Core.UI
             }
 
             return TurnManager.Instance.ActiveCharacterNetId != 0
+                && !TurnManager.Instance.IsSetupPhase
                 ? TurnManager.Instance.ActiveCharacterNetId
                 : local.Player.SelectedCharacterNetId;
         }

@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using RRaM.Core.Board;
 using UnityEngine;
 
 namespace RRaM.Core.Cards
@@ -65,6 +66,25 @@ namespace RRaM.Core.Cards
             return card != null;
         }
 
+        public bool TryDraw(BoardNodeKind nodeKind, out BaseCard card)
+        {
+            for (int i = 0; i < runtimeDeck.Count; i++)
+            {
+                BaseCard candidate = runtimeDeck[i];
+                if (candidate == null || !IsCardAllowedForNode(candidate, nodeKind))
+                {
+                    continue;
+                }
+
+                runtimeDeck.RemoveAt(i);
+                card = candidate;
+                return true;
+            }
+
+            card = Draw();
+            return card != null;
+        }
+
         public bool TryResolveCard(string cardId, out BaseCard card)
         {
             if (string.IsNullOrWhiteSpace(cardId))
@@ -120,6 +140,33 @@ namespace RRaM.Core.Cards
                 int swapIndex = Random.Range(0, i + 1);
                 (runtimeDeck[i], runtimeDeck[swapIndex]) = (runtimeDeck[swapIndex], runtimeDeck[i]);
             }
+        }
+
+        private static bool IsCardAllowedForNode(BaseCard card, BoardNodeKind nodeKind)
+        {
+            string cardId = card.CardId;
+            return nodeKind switch
+            {
+                BoardNodeKind.GreenDeck => cardId is
+                    "RamCard" or
+                    "SheepWoolCard" or
+                    "RamHideCard" or
+                    "RamHideThreadCard" or
+                    "RamWoolThreadBallCard" or
+                    "CleanedRamHideCard" or
+                    "FlexibleStickCard" or
+                    "DirtyMixedIronOreCard" or
+                    "MixedIronOreCard" or
+                    "GoldNuggetCard" or
+                    "MediumQualityIronOreCard",
+                BoardNodeKind.RedDeck => cardId is
+                    "RamCard" or
+                    "BearHideCard" or
+                    "ClubBlueprintCard" or
+                    "ClubCard" or
+                    "BowCard",
+                _ => true
+            };
         }
 
         private void OnDestroy()

@@ -17,6 +17,11 @@ namespace RRaM.Core.Cards
     {
         public static CardManager Instance { get; private set; }
 
+        private const int HandSlotCount = 5;
+        private const int BaseCharacterCardCapacity = 10;
+        private const int BagCapacityBonus = 3;
+        private const string BagCardId = "BagCard";
+
         private readonly Dictionary<int, List<CardInstance>> cardsByPlayerSlot = new();
 
         private void Awake()
@@ -64,6 +69,7 @@ namespace RRaM.Core.Cards
         {
             if (player == null ||
                 TurnManager.Instance == null ||
+                Match.MatchManager.Instance?.State == Match.MatchState.Completed ||
                 !TurnManager.Instance.ServerIsCurrentPlayer(player) ||
                 !TurnManager.Instance.CanPlayerSpendDieAction(player.PlayerSlot))
             {
@@ -88,7 +94,7 @@ namespace RRaM.Core.Cards
                 return false;
             }
 
-            if (!TryResolveDeckNode(actingCharacter, out string deckNodeId))
+            if (!TryResolveDeckNode(actingCharacter, out string deckNodeId, out BoardNodeKind deckNodeKind))
             {
                 Debug.LogWarning($"[Cards] Draw rejected. Character '{actingCharacter.DisplayName}' is not standing on a deck point.");
                 return false;
@@ -102,12 +108,7 @@ namespace RRaM.Core.Cards
 
             player.SetSelectedCharacter(actingCharacter.netId);
 
-            if (!TurnManager.Instance.ServerTryConsumeDeckDrawAction(player.PlayerSlot, deckNodeId))
-            {
-                return false;
-            }
-
-            if (!deck.TryDraw(out BaseCard cardData))
+            if (!deck.TryDraw(deckNodeKind, out BaseCard cardData))
             {
                 Debug.LogWarning("[Cards] Draw aborted. Deck was exhausted before the card could be created.");
                 return false;
@@ -115,7 +116,20 @@ namespace RRaM.Core.Cards
 
             CardContext drawContext = BuildContext(player, actingCharacter, null);
             int handSlotIndex = Mathf.Clamp(cardData.ResolveHandSlotIndex(drawContext), 0, HandSlotCount - 1);
-            ServerSpawnOwnedCard(player, cardData, actingCharacter, handSlotIndex);
+            NetworkCharacterPawn assignedCharacter = ResolveAssignmentCharacter(player, actingCharacter, handSlotIndex);
+            if (assignedCharacter == null || !CanAcceptCard(player, assignedCharacter, cardData))
+            {
+                deck.ReturnCardAndShuffle(cardData);
+                return false;
+            }
+
+            if (!TurnManager.Instance.ServerTryConsumeDeckDrawAction(player.PlayerSlot, deckNodeId))
+            {
+                deck.ReturnCardAndShuffle(cardData);
+                return false;
+            }
+
+            ServerSpawnOwnedCard(player, cardData, assignedCharacter, handSlotIndex);
             SyncPlayerCards(player);
             return true;
         }
@@ -180,6 +194,7 @@ namespace RRaM.Core.Cards
                 cardInstance.IsPendingConsume ||
                 cardInstance.Data == null ||
                 TurnManager.Instance == null ||
+                Match.MatchManager.Instance?.State == Match.MatchState.Completed ||
                 !TurnManager.Instance.ServerIsCurrentPlayer(player) ||
                 !TurnManager.Instance.CanPlayerSpendDieAction(player.PlayerSlot) ||
                 !cardInstance.Data.IsPlayable ||
@@ -189,8 +204,17 @@ namespace RRaM.Core.Cards
             }
 
             CardContext context = BuildContext(player, cardInstance);
-            if (context.character == null || !cardInstance.Data.CanUse(context))
+            if (context.character == null ||
+                context.character.OwnerSlot != player.PlayerSlot ||
+                context.character.IsDead)
             {
+                Debug.LogWarning($"[Cards] Use rejected. Invalid assigned character. Card={cardInstance.Data.CardId}, Slot={player.PlayerSlot}, CharacterNetId={(context.character != null ? context.character.netId : 0)}");
+                return false;
+            }
+
+            if (!cardInstance.Data.CanUse(context))
+            {
+                Debug.LogWarning($"[Cards] Use rejected by card rules. Card={cardInstance.Data.CardId}, Slot={player.PlayerSlot}, Character={context.character.DisplayName}, DieMinimum={cardInstance.Data.MinimumDieValue}");
                 return false;
             }
 
@@ -258,6 +282,7 @@ namespace RRaM.Core.Cards
                 cardInstance.ownerNetId != player.netId ||
                 TurnManager.Instance == null ||
                 CharacterManager.Instance == null ||
+                Match.MatchManager.Instance?.State == Match.MatchState.Completed ||
                 !TurnManager.Instance.ServerIsCurrentPlayer(player) ||
                 !TurnManager.Instance.CanPlayerTransferCard(player.PlayerSlot))
             {
@@ -289,6 +314,11 @@ namespace RRaM.Core.Cards
                 return false;
             }
 
+            if (!CanAcceptCard(player, targetCharacter, cardInstance.Data))
+            {
+                return false;
+            }
+
             if (!TurnManager.Instance.ServerTryConsumeCardTransfer(player.PlayerSlot))
             {
                 return false;
@@ -300,8 +330,6 @@ namespace RRaM.Core.Cards
             SyncPlayerCards(player);
             return true;
         }
-
-        private const int HandSlotCount = 5;
 
         [Server]
         private void ServerDealStarterCards(IReadOnlyList<NetworkPlayerConnection> players)
@@ -361,7 +389,28 @@ namespace RRaM.Core.Cards
                     ServerSpawnOwnedCard(player, starterCard.Card, assignedCharacter, (int)starterCard.AssignedCharacter);
                 }
 
+                DealBaseTeleportationBeads(player);
+
                 SyncPlayerCards(player);
+            }
+        }
+
+        [Server]
+        private void DealBaseTeleportationBeads(NetworkPlayerConnection player)
+        {
+            if (player == null || CharacterManager.Instance == null || !TryResolveCardData("TeleportationBeadsCard", out BaseCard beadsCard))
+            {
+                return;
+            }
+
+            foreach (CharacterType characterType in System.Enum.GetValues(typeof(CharacterType)))
+            {
+                if (!CharacterManager.Instance.TryGetServerCharacter(player, characterType, out NetworkCharacterPawn character))
+                {
+                    continue;
+                }
+
+                ServerSpawnOwnedCard(player, beadsCard, character, (int)characterType);
             }
         }
 
@@ -429,6 +478,614 @@ namespace RRaM.Core.Cards
         }
 
         [Server]
+        public bool HasOwnedCard(NetworkPlayerConnection player, string cardId, uint assignedCharacterNetId = 0)
+        {
+            if (player == null || string.IsNullOrWhiteSpace(cardId) ||
+                !cardsByPlayerSlot.TryGetValue(player.PlayerSlot, out List<CardInstance> cards))
+            {
+                return false;
+            }
+
+            string normalizedCardId = cardId.Trim();
+            for (int i = 0; i < cards.Count; i++)
+            {
+                CardInstance card = cards[i];
+                if (card == null || card.IsPendingConsume || card.Data == null)
+                {
+                    continue;
+                }
+
+                if (assignedCharacterNetId != 0 && card.AssignedCharacterNetId != assignedCharacterNetId)
+                {
+                    continue;
+                }
+
+                if (card.Data.CardId == normalizedCardId)
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        [Server]
+        public bool HasOwnedCardOnCharacterType(NetworkPlayerConnection player, string cardId, CharacterType characterType)
+        {
+            return CharacterManager.Instance != null &&
+                   CharacterManager.Instance.TryGetServerCharacter(player, characterType, out NetworkCharacterPawn character) &&
+                   HasOwnedCard(player, cardId, character.netId);
+        }
+
+        [Server]
+        public int CountOwnedCards(NetworkPlayerConnection player, uint assignedCharacterNetId, uint ignoredCardNetId = 0)
+        {
+            if (player == null || assignedCharacterNetId == 0 ||
+                !cardsByPlayerSlot.TryGetValue(player.PlayerSlot, out List<CardInstance> cards))
+            {
+                return 0;
+            }
+
+            int count = 0;
+            for (int i = 0; i < cards.Count; i++)
+            {
+                CardInstance card = cards[i];
+                if (card != null &&
+                    !card.IsPendingConsume &&
+                    card.netId != ignoredCardNetId &&
+                    card.AssignedCharacterNetId == assignedCharacterNetId)
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
+
+        [Server]
+        public int GetCharacterCardCapacity(NetworkPlayerConnection player, NetworkCharacterPawn character)
+        {
+            if (player == null || character == null)
+            {
+                return BaseCharacterCardCapacity;
+            }
+
+            int capacity = BaseCharacterCardCapacity;
+            if (HasOwnedCard(player, BagCardId, character.netId))
+            {
+                capacity += BagCapacityBonus;
+            }
+
+            return capacity;
+        }
+
+        [Server]
+        public bool CanAcceptCard(NetworkPlayerConnection player, NetworkCharacterPawn character, BaseCard cardData, uint ignoredCardNetId = 0)
+        {
+            if (player == null || character == null || cardData == null || character.OwnerSlot != player.PlayerSlot || character.IsDead)
+            {
+                return false;
+            }
+
+            return CountOwnedCards(player, character.netId, ignoredCardNetId) < GetCharacterCardCapacity(player, character);
+        }
+
+        [Server]
+        public bool ServerTryGrantCard(NetworkPlayerConnection player, NetworkCharacterPawn character, string cardId, uint ignoredCardNetId = 0)
+        {
+            if (player == null || character == null || string.IsNullOrWhiteSpace(cardId) || !TryResolveCardData(cardId, out BaseCard cardData))
+            {
+                return false;
+            }
+
+            int handSlotIndex = Mathf.Clamp((int)character.CharacterType, 0, HandSlotCount - 1);
+            if (!CanAcceptCard(player, character, cardData, ignoredCardNetId))
+            {
+                return false;
+            }
+
+            ServerSpawnOwnedCard(player, cardData, character, handSlotIndex);
+            SyncPlayerCards(player);
+            return true;
+        }
+
+        [Server]
+        public bool ServerTryGrantCardToCharacterType(NetworkPlayerConnection player, CharacterType characterType, string cardId, uint ignoredCardNetId = 0)
+        {
+            return CharacterManager.Instance != null &&
+                   CharacterManager.Instance.TryGetServerCharacter(player, characterType, out NetworkCharacterPawn character) &&
+                   ServerTryGrantCard(player, character, cardId, ignoredCardNetId);
+        }
+
+        [Server]
+        public bool ServerHasCards(NetworkPlayerConnection player, params string[] cardIds)
+        {
+            if (player == null || cardIds == null)
+            {
+                return false;
+            }
+
+            Dictionary<string, int> required = BuildRequiredCardCounts(cardIds);
+            foreach (KeyValuePair<string, int> pair in required)
+            {
+                if (CountOwnedCardsById(player, pair.Key) < pair.Value)
+                {
+                    return false;
+                }
+            }
+
+            return true;
+        }
+
+        [Server]
+        public bool ServerTryConsumeCards(NetworkPlayerConnection player, params string[] cardIds)
+        {
+            return ServerTryConsumeCardsPreferCharacter(player, 0, cardIds);
+        }
+
+        [Server]
+        public bool ServerTryConsumeCardsPreferCharacter(NetworkPlayerConnection player, uint preferredCharacterNetId, params string[] cardIds)
+        {
+            if (!ServerHasCards(player, cardIds))
+            {
+                return false;
+            }
+
+            List<CardInstance> cardsToConsume = new(cardIds.Length);
+            for (int i = 0; i < cardIds.Length; i++)
+            {
+                if (!TryFindOwnedCard(player, cardIds[i], preferredCharacterNetId, cardsToConsume, out CardInstance card) &&
+                    !TryFindOwnedCard(player, cardIds[i], 0, cardsToConsume, out card))
+                {
+                    return false;
+                }
+
+                cardsToConsume.Add(card);
+            }
+
+            for (int i = 0; i < cardsToConsume.Count; i++)
+            {
+                CardInstance card = cardsToConsume[i];
+                ServerRemoveCard(player, card, returnToDeck: true);
+            }
+
+            SyncPlayerCards(player);
+            return true;
+        }
+
+        [Server]
+        public bool ServerTryDamageNearestEnemy(NetworkPlayerConnection attackerPlayer, NetworkCharacterPawn attacker, int range, int damage)
+        {
+            return ServerTryDamageNearestEnemy(attackerPlayer, attacker, 0, range, damage);
+        }
+
+        [Server]
+        public bool ServerTryDamageNearestEnemy(NetworkPlayerConnection attackerPlayer, NetworkCharacterPawn attacker, int minRange, int maxRange, int damage)
+        {
+            if (attackerPlayer == null || attacker == null || attacker.IsDead || minRange < 0 || maxRange < minRange || damage <= 0)
+            {
+                return false;
+            }
+
+            if (!TryFindNearestEnemy(attackerPlayer, attacker, minRange, maxRange, out NetworkPlayerConnection targetPlayer, out NetworkCharacterPawn target))
+            {
+                return false;
+            }
+
+            target.ServerApplyDamage(damage);
+            CharacterManager.Instance?.ServerSyncPlayerCharacters(targetPlayer);
+            CharacterManager.Instance?.ServerSyncPlayerCharacters(attackerPlayer);
+
+            if (target.IsDead)
+            {
+                ServerTransferInventoryOnKill(targetPlayer, target, attackerPlayer, attacker);
+                Match.MatchManager.Instance?.ServerCheckEliminationVictory();
+            }
+
+            return true;
+        }
+
+        [Server]
+        public bool ServerHasEnemyInRange(NetworkPlayerConnection attackerPlayer, NetworkCharacterPawn attacker, int range)
+        {
+            return ServerHasEnemyInRange(attackerPlayer, attacker, 0, range);
+        }
+
+        [Server]
+        public bool ServerHasEnemyInRange(NetworkPlayerConnection attackerPlayer, NetworkCharacterPawn attacker, int minRange, int maxRange)
+        {
+            return TryFindNearestEnemy(attackerPlayer, attacker, Mathf.Max(0, minRange), Mathf.Max(0, maxRange), out _, out _);
+        }
+
+        [Server]
+        public bool ServerCanGrantCardToCharacterType(NetworkPlayerConnection player, CharacterType characterType, string cardId, uint ignoredCardNetId = 0)
+        {
+            return CharacterManager.Instance != null &&
+                   CharacterManager.Instance.TryGetServerCharacter(player, characterType, out NetworkCharacterPawn character) &&
+                   TryResolveCardData(cardId, out BaseCard cardData) &&
+                   CanAcceptCard(player, character, cardData, ignoredCardNetId);
+        }
+
+        [Server]
+        public bool ServerCanGrantCards(NetworkPlayerConnection player, NetworkCharacterPawn character, uint ignoredCardNetId, params string[] cardIds)
+        {
+            if (player == null || character == null || cardIds == null || character.OwnerSlot != player.PlayerSlot || character.IsDead)
+            {
+                return false;
+            }
+
+            int grantCount = 0;
+            for (int i = 0; i < cardIds.Length; i++)
+            {
+                if (string.IsNullOrWhiteSpace(cardIds[i]) || !TryResolveCardData(cardIds[i], out _))
+                {
+                    return false;
+                }
+
+                grantCount++;
+            }
+
+            return CountOwnedCards(player, character.netId, ignoredCardNetId) + grantCount <= GetCharacterCardCapacity(player, character);
+        }
+
+        [Server]
+        public bool ServerCanGrantCardsAfterConsuming(
+            NetworkPlayerConnection player,
+            NetworkCharacterPawn character,
+            uint ignoredCardNetId,
+            string[] consumedCardIds,
+            params string[] grantedCardIds)
+        {
+            if (player == null || character == null || character.OwnerSlot != player.PlayerSlot || character.IsDead)
+            {
+                return false;
+            }
+
+            if (!ServerCanGrantCards(player, character, ignoredCardNetId, grantedCardIds) && character != null)
+            {
+                int grantCount = CountResolvableCards(grantedCardIds);
+                int freedSlots = CountCardsOnCharacterMatchingRequirements(player, character.netId, ignoredCardNetId, consumedCardIds);
+                return grantCount >= 0 &&
+                       ServerHasCards(player, consumedCardIds) &&
+                       CountOwnedCards(player, character.netId, ignoredCardNetId) - freedSlots + grantCount <= GetCharacterCardCapacity(player, character);
+            }
+
+            return ServerHasCards(player, consumedCardIds);
+        }
+
+        [Server]
+        public bool ServerCanGrantCardsToCharacterTypeAfterConsuming(
+            NetworkPlayerConnection player,
+            CharacterType characterType,
+            uint ignoredCardNetId,
+            string[] consumedCardIds,
+            params string[] grantedCardIds)
+        {
+            return CharacterManager.Instance != null &&
+                   CharacterManager.Instance.TryGetServerCharacter(player, characterType, out NetworkCharacterPawn character) &&
+                   ServerCanGrantCardsAfterConsuming(player, character, ignoredCardNetId, consumedCardIds, grantedCardIds);
+        }
+
+        [Server]
+        public bool ServerTryHealCharacter(NetworkPlayerConnection player, NetworkCharacterPawn character, int amount)
+        {
+            if (player == null || character == null || character.OwnerSlot != player.PlayerSlot || character.IsDead || amount <= 0)
+            {
+                return false;
+            }
+
+            character.ServerHeal(amount);
+            CharacterManager.Instance?.ServerSyncPlayerCharacters(player);
+            return true;
+        }
+
+        [Server]
+        private void ServerRemoveCard(NetworkPlayerConnection player, CardInstance card, bool returnToDeck)
+        {
+            if (player == null || card == null)
+            {
+                return;
+            }
+
+            if (returnToDeck && card.Data != null)
+            {
+                GetDeck()?.ReturnCardAndShuffle(card.Data);
+            }
+
+            if (cardsByPlayerSlot.TryGetValue(player.PlayerSlot, out List<CardInstance> cards))
+            {
+                cards.Remove(card);
+            }
+
+            card.ServerMarkPendingConsume();
+            NetworkServer.Destroy(card.gameObject);
+        }
+
+        [Server]
+        private bool TryFindOwnedCard(NetworkPlayerConnection player, string cardId, out CardInstance cardInstance)
+        {
+            return TryFindOwnedCard(player, cardId, 0, null, out cardInstance);
+        }
+
+        [Server]
+        private bool TryFindOwnedCard(
+            NetworkPlayerConnection player,
+            string cardId,
+            uint preferredCharacterNetId,
+            List<CardInstance> excludedCards,
+            out CardInstance cardInstance)
+        {
+            cardInstance = null;
+            if (player == null || string.IsNullOrWhiteSpace(cardId) ||
+                !cardsByPlayerSlot.TryGetValue(player.PlayerSlot, out List<CardInstance> cards))
+            {
+                return false;
+            }
+
+            string normalizedCardId = cardId.Trim();
+            for (int i = 0; i < cards.Count; i++)
+            {
+                CardInstance candidate = cards[i];
+                if (candidate == null ||
+                    candidate.IsPendingConsume ||
+                    candidate.Data == null ||
+                    candidate.Data.CardId != normalizedCardId ||
+                    (preferredCharacterNetId != 0 && candidate.AssignedCharacterNetId != preferredCharacterNetId) ||
+                    (excludedCards != null && excludedCards.Contains(candidate)))
+                {
+                    continue;
+                }
+
+                cardInstance = candidate;
+                return true;
+            }
+
+            return false;
+        }
+
+        [Server]
+        private int CountCardsOnCharacterMatchingRequirements(
+            NetworkPlayerConnection player,
+            uint characterNetId,
+            uint ignoredCardNetId,
+            IEnumerable<string> requiredCardIds)
+        {
+            if (player == null || characterNetId == 0 || requiredCardIds == null ||
+                !cardsByPlayerSlot.TryGetValue(player.PlayerSlot, out List<CardInstance> cards))
+            {
+                return 0;
+            }
+
+            Dictionary<string, int> required = BuildRequiredCardCounts(requiredCardIds);
+            int count = 0;
+            for (int i = 0; i < cards.Count; i++)
+            {
+                CardInstance candidate = cards[i];
+                if (candidate == null ||
+                    candidate.IsPendingConsume ||
+                    candidate.netId == ignoredCardNetId ||
+                    candidate.AssignedCharacterNetId != characterNetId ||
+                    candidate.Data == null ||
+                    !required.TryGetValue(candidate.Data.CardId, out int remaining) ||
+                    remaining <= 0)
+                {
+                    continue;
+                }
+
+                required[candidate.Data.CardId] = remaining - 1;
+                count++;
+            }
+
+            return count;
+        }
+
+        private static int CountResolvableCards(IEnumerable<string> cardIds)
+        {
+            if (cardIds == null)
+            {
+                return -1;
+            }
+
+            int count = 0;
+            foreach (string cardId in cardIds)
+            {
+                if (string.IsNullOrWhiteSpace(cardId) || !TryResolveCardData(cardId, out _))
+                {
+                    return -1;
+                }
+
+                count++;
+            }
+
+            return count;
+        }
+
+        [Server]
+        private int CountOwnedCardsById(NetworkPlayerConnection player, string cardId)
+        {
+            if (player == null || string.IsNullOrWhiteSpace(cardId) ||
+                !cardsByPlayerSlot.TryGetValue(player.PlayerSlot, out List<CardInstance> cards))
+            {
+                return 0;
+            }
+
+            string normalizedCardId = cardId.Trim();
+            int count = 0;
+            for (int i = 0; i < cards.Count; i++)
+            {
+                CardInstance card = cards[i];
+                if (card != null && !card.IsPendingConsume && card.Data != null && card.Data.CardId == normalizedCardId)
+                {
+                    count++;
+                }
+            }
+
+            return count;
+        }
+
+        private static Dictionary<string, int> BuildRequiredCardCounts(IEnumerable<string> cardIds)
+        {
+            Dictionary<string, int> required = new();
+            foreach (string cardId in cardIds)
+            {
+                if (string.IsNullOrWhiteSpace(cardId))
+                {
+                    continue;
+                }
+
+                string normalizedCardId = cardId.Trim();
+                required.TryGetValue(normalizedCardId, out int count);
+                required[normalizedCardId] = count + 1;
+            }
+
+            return required;
+        }
+
+        [Server]
+        private NetworkCharacterPawn ResolveAssignmentCharacter(NetworkPlayerConnection player, NetworkCharacterPawn fallbackCharacter, int handSlotIndex)
+        {
+            if (player == null || CharacterManager.Instance == null)
+            {
+                return fallbackCharacter;
+            }
+
+            if (handSlotIndex >= 0 &&
+                handSlotIndex <= byte.MaxValue &&
+                System.Enum.IsDefined(typeof(CharacterType), (byte)handSlotIndex) &&
+                CharacterManager.Instance.TryGetServerCharacter(player, (CharacterType)(byte)handSlotIndex, out NetworkCharacterPawn fixedCharacter))
+            {
+                return fixedCharacter;
+            }
+
+            return fallbackCharacter;
+        }
+
+        [Server]
+        private static bool TryResolveCardData(string cardId, out BaseCard cardData)
+        {
+            cardData = null;
+            Deck deck = GetDeck();
+            return deck != null && deck.TryResolveCard(cardId, out cardData);
+        }
+
+        [Server]
+        private static bool TryFindNearestEnemy(
+            NetworkPlayerConnection attackerPlayer,
+            NetworkCharacterPawn attacker,
+            int minRange,
+            int maxRange,
+            out NetworkPlayerConnection targetPlayer,
+            out NetworkCharacterPawn target)
+        {
+            targetPlayer = null;
+            target = null;
+            if (attackerPlayer == null || attacker == null || Match.MatchManager.Instance == null)
+            {
+                return false;
+            }
+
+            int bestDistance = int.MaxValue;
+            IReadOnlyList<NetworkPlayerConnection> players = Match.MatchManager.Instance.Players;
+            for (int playerIndex = 0; playerIndex < players.Count; playerIndex++)
+            {
+                NetworkPlayerConnection candidatePlayer = players[playerIndex];
+                if (candidatePlayer == null || candidatePlayer.PlayerSlot == attackerPlayer.PlayerSlot)
+                {
+                    continue;
+                }
+
+                for (int i = 0; i < candidatePlayer.Characters.Count; i++)
+                {
+                    CharacterSnapshot snapshot = candidatePlayer.Characters[i];
+                    if (snapshot.NetId == 0 || snapshot.IsDead || CharacterManager.Instance == null ||
+                        !CharacterManager.Instance.TryGetServerCharacter(snapshot.NetId, out NetworkCharacterPawn candidate) ||
+                        candidate.IsDead)
+                    {
+                        continue;
+                    }
+
+                    int distance = ResolveBoardDistance(attacker.CurrentNodeId, candidate.CurrentNodeId);
+                    if (distance < minRange || distance > maxRange || distance >= bestDistance)
+                    {
+                        continue;
+                    }
+
+                    bestDistance = distance;
+                    targetPlayer = candidatePlayer;
+                    target = candidate;
+                }
+            }
+
+            return target != null;
+        }
+
+        private static int ResolveBoardDistance(string startNodeId, string destinationNodeId)
+        {
+            if (string.IsNullOrWhiteSpace(startNodeId) || string.IsNullOrWhiteSpace(destinationNodeId))
+            {
+                return -1;
+            }
+
+            if (startNodeId == destinationNodeId)
+            {
+                return 0;
+            }
+
+            BoardGraph board = BoardGraph.Instance != null ? BoardGraph.Instance : FindAnyObjectByType<BoardGraph>();
+            if (board == null || !board.TryGetShortestPath(startNodeId, destinationNodeId, out List<string> path))
+            {
+                return -1;
+            }
+
+            return Mathf.Max(0, path.Count - 1);
+        }
+
+        [Server]
+        private void ServerTransferInventoryOnKill(
+            NetworkPlayerConnection defeatedPlayer,
+            NetworkCharacterPawn defeatedCharacter,
+            NetworkPlayerConnection winnerPlayer,
+            NetworkCharacterPawn winnerCharacter)
+        {
+            if (defeatedPlayer == null || defeatedCharacter == null || winnerPlayer == null || winnerCharacter == null)
+            {
+                return;
+            }
+
+            if (!cardsByPlayerSlot.TryGetValue(defeatedPlayer.PlayerSlot, out List<CardInstance> defeatedCards))
+            {
+                return;
+            }
+
+            if (!cardsByPlayerSlot.TryGetValue(winnerPlayer.PlayerSlot, out List<CardInstance> winnerCards))
+            {
+                winnerCards = new List<CardInstance>();
+                cardsByPlayerSlot[winnerPlayer.PlayerSlot] = winnerCards;
+            }
+
+            for (int i = defeatedCards.Count - 1; i >= 0; i--)
+            {
+                CardInstance card = defeatedCards[i];
+                if (card == null || card.AssignedCharacterNetId != defeatedCharacter.netId)
+                {
+                    continue;
+                }
+
+                defeatedCards.RemoveAt(i);
+                if (!winnerCards.Contains(card))
+                {
+                    winnerCards.Add(card);
+                }
+
+                int handSlotIndex = Mathf.Clamp((int)winnerCharacter.CharacterType, 0, HandSlotCount - 1);
+                card.ServerAssignOwner(winnerPlayer.netId, winnerPlayer.PlayerSlot, winnerCharacter.netId, handSlotIndex);
+            }
+
+            SyncPlayerCards(defeatedPlayer);
+            SyncPlayerCards(winnerPlayer);
+        }
+
+        [Server]
         private bool TryResolveTurnCharacter(NetworkPlayerConnection player, out NetworkCharacterPawn character)
         {
             character = null;
@@ -445,13 +1102,14 @@ namespace RRaM.Core.Cards
                 return false;
             }
 
-            return character.OwnerSlot == player.PlayerSlot;
+            return character.OwnerSlot == player.PlayerSlot && !character.IsDead;
         }
 
         [Server]
-        private static bool TryResolveDeckNode(NetworkCharacterPawn character, out string deckNodeId)
+        private static bool TryResolveDeckNode(NetworkCharacterPawn character, out string deckNodeId, out BoardNodeKind nodeKind)
         {
             deckNodeId = string.Empty;
+            nodeKind = BoardNodeKind.Normal;
             if (character == null ||
                 string.IsNullOrWhiteSpace(character.CurrentNodeId) ||
                 BoardGraph.Instance == null)
@@ -471,6 +1129,7 @@ namespace RRaM.Core.Cards
             }
 
             deckNodeId = node.NodeId;
+            nodeKind = node.NodeKind;
             return true;
         }
 

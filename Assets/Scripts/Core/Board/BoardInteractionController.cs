@@ -311,15 +311,16 @@ namespace RRaM.Core.Board
             }
 
             int localSlot = local.Player.PlayerSlot;
+            bool isSetupMove = turnManager.IsSetupPhase;
             bool movementPhaseReady =
                 turnManager.CanPlayerMove(localSlot) &&
-                diceManager.HasRolled &&
+                (isSetupMove || diceManager.HasRolled) &&
                 turnManager.CurrentPhase == TurnPhase.WaitingForMove &&
-                turnManager.GetRemainingMoveBudget() > 0;
+                turnManager.GetRemainingMoveBudget(localSlot) > 0;
             if (!movementPhaseReady)
             {
                 movementState =
-                    $"Movement blocked. LocalSlot={localSlot}, HasRolled={diceManager.HasRolled}, CanPlayerMove={turnManager.CanPlayerMove(localSlot)}, RemainingBudget={turnManager.GetRemainingMoveBudget()}, RemainingDieActions={turnManager.GetRemainingDieActions()}, Phase={turnManager.CurrentPhase}";
+                    $"Movement blocked. LocalSlot={localSlot}, Setup={isSetupMove}, HasRolled={diceManager.HasRolled}, CanPlayerMove={turnManager.CanPlayerMove(localSlot)}, RemainingBudget={turnManager.GetRemainingMoveBudget(localSlot)}, RemainingDieActions={turnManager.GetRemainingDieActions()}, Phase={turnManager.CurrentPhase}";
                 return false;
             }
 
@@ -353,8 +354,8 @@ namespace RRaM.Core.Board
             }
 
             movementBudget = new MovementBudget(
-                turnManager.GetPrimaryMoveBudget(),
-                turnManager.GetRemainingMoveBudget());
+                turnManager.GetPrimaryMoveBudget(localSlot),
+                turnManager.GetRemainingMoveBudget(localSlot));
             movementState =
                 $"Movement ready. SelectedCharacter='{selectedCharacter.DisplayName}', Node='{selectedCharacter.CurrentNodeId}', Source={selectedCharacterSource}, PrimaryBudget={movementBudget.Primary}, TotalBudget={movementBudget.Total}, CanPlayerMove={turnManager.CanPlayerMove(localSlot)}, Phase={turnManager.CurrentPhase}";
             return true;

@@ -52,11 +52,7 @@ namespace RRaM.Core.Dwarfs
             EnsureMarkerOnlyMode();
             if (!useBoardMarkersOnly)
             {
-                EnsureMarkerOnlyMode();
-            if (!useBoardMarkersOnly)
-            {
                 EnsureVisual();
-            }
             }
 
             ApplyWorldPosition();

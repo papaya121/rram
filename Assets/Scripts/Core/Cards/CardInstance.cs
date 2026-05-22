@@ -69,6 +69,15 @@ namespace RRaM.Core.Cards
             handSlotIndex = slotIndex;
         }
 
+        [Server]
+        public void ServerAssignOwner(uint ownerId, int playerSlot, uint characterNetId, int slotIndex)
+        {
+            ownerNetId = ownerId;
+            ownerPlayerSlot = playerSlot;
+            assignedCharacterNetId = characterNetId;
+            handSlotIndex = slotIndex;
+        }
+
         public override void OnStartClient()
         {
             base.OnStartClient();

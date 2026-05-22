@@ -109,6 +109,7 @@ namespace RRaM.Core.Characters
             }
 
             if (pawn.OwnerSlot != player.PlayerSlot ||
+                pawn.IsDead ||
                 (TurnManager.Instance != null && !TurnManager.Instance.CanPlayerSelectCharacter(player.PlayerSlot, characterNetId)))
             {
                 return false;
@@ -146,9 +147,9 @@ namespace RRaM.Core.Characters
         [Server]
         public bool ServerTryMoveSelectedCharacter(NetworkPlayerConnection player, string destinationNodeId, uint requestedCharacterNetId = 0)
         {
-            if (player == null || TurnManager.Instance == null || Dice.DiceManager.Instance == null)
+            if (player == null || TurnManager.Instance == null)
             {
-                Debug.LogWarning($"[Server] Movement rejected. Missing dependencies. Player={(player != null)} TurnManager={(TurnManager.Instance != null)} DiceManager={(Dice.DiceManager.Instance != null)}");
+                Debug.LogWarning($"[Server] Movement rejected. Missing dependencies. Player={(player != null)} TurnManager={(TurnManager.Instance != null)}");
                 return false;
             }
 
@@ -158,9 +159,11 @@ namespace RRaM.Core.Characters
                 return false;
             }
 
-            if (!Dice.DiceManager.Instance.HasRolled || !TurnManager.Instance.CanPlayerMove(player.PlayerSlot))
+            bool isSetupMove = TurnManager.Instance.IsSetupPhase;
+            bool hasRequiredRoll = isSetupMove || (Dice.DiceManager.Instance != null && Dice.DiceManager.Instance.HasRolled);
+            if (!hasRequiredRoll || !TurnManager.Instance.CanPlayerMove(player.PlayerSlot))
             {
-                Debug.LogWarning($"[Server] Movement rejected. Cannot move. Slot={player.PlayerSlot}, HasRolled={Dice.DiceManager.Instance.HasRolled}, CanPlayerMove={TurnManager.Instance.CanPlayerMove(player.PlayerSlot)}, Phase={TurnManager.Instance.CurrentPhase}, RemainingMove={TurnManager.Instance.GetRemainingMoveBudget()}, RemainingDieActions={TurnManager.Instance.GetRemainingDieActions()}");
+                Debug.LogWarning($"[Server] Movement rejected. Cannot move. Slot={player.PlayerSlot}, Setup={isSetupMove}, HasRolled={(Dice.DiceManager.Instance != null && Dice.DiceManager.Instance.HasRolled)}, CanPlayerMove={TurnManager.Instance.CanPlayerMove(player.PlayerSlot)}, Phase={TurnManager.Instance.CurrentPhase}, RemainingMove={TurnManager.Instance.GetRemainingMoveBudget()}, RemainingDieActions={TurnManager.Instance.GetRemainingDieActions()}");
                 return false;
             }
 
@@ -171,7 +174,7 @@ namespace RRaM.Core.Characters
                 return false;
             }
 
-            if (pawn.OwnerSlot != player.PlayerSlot)
+            if (pawn.OwnerSlot != player.PlayerSlot || pawn.IsDead)
             {
                 Debug.LogWarning($"[Server] Movement rejected. Character ownership mismatch. Slot={player.PlayerSlot}, CharacterNetId={pawn.netId}, OwnerSlot={pawn.OwnerSlot}, Destination={destinationNodeId}");
                 return false;
@@ -198,7 +201,7 @@ namespace RRaM.Core.Characters
                 return false;
             }
 
-            int moveBudget = TurnManager.Instance.GetRemainingMoveBudget();
+            int moveBudget = TurnManager.Instance.GetRemainingMoveBudget(player.PlayerSlot);
             if (!TryResolveMovementPath(pawn.CurrentNodeId, destinationNodeId, moveBudget, out List<string> path, out string pathResolver))
             {
                 Debug.LogWarning($"[Server] Movement rejected. Path invalid. Slot={player.PlayerSlot}, CharacterNetId={pawn.netId}, From={pawn.CurrentNodeId}, Destination={destinationNodeId}, Budget={moveBudget}, Resolver={pathResolver}");
@@ -206,7 +209,7 @@ namespace RRaM.Core.Characters
             }
 
             int usedSteps = Mathf.Max(0, path.Count - 1);
-            if (!TurnManager.Instance.ServerConsumeMovement(usedSteps))
+            if (!TurnManager.Instance.ServerConsumeMovement(player.PlayerSlot, usedSteps))
             {
                 Debug.LogWarning($"[Server] Movement rejected. Failed to consume movement. Slot={player.PlayerSlot}, CharacterNetId={pawn.netId}, UsedSteps={usedSteps}, PrimaryBudget={TurnManager.Instance.GetPrimaryMoveBudget()}, RemainingMove={TurnManager.Instance.GetRemainingMoveBudget()}, RemainingDieActions={TurnManager.Instance.GetRemainingDieActions()}");
                 return false;
@@ -271,7 +274,7 @@ namespace RRaM.Core.Characters
             for (int i = 0; i < roster.Count; i++)
             {
                 NetworkCharacterPawn candidate = roster[i];
-                if (candidate != null && candidate.isActiveAndEnabled && candidate.gameObject.activeInHierarchy)
+                if (candidate != null && !candidate.IsDead && candidate.isActiveAndEnabled && candidate.gameObject.activeInHierarchy)
                 {
                     activeCharacters.Add(candidate);
                 }
@@ -284,6 +287,12 @@ namespace RRaM.Core.Characters
 
             pawn = activeCharacters[Random.Range(0, activeCharacters.Count)];
             return pawn != null;
+        }
+
+        [Server]
+        public void ServerSyncPlayerCharacters(NetworkPlayerConnection player)
+        {
+            SyncPlayerCharacters(player);
         }
 
         [Server]
@@ -301,7 +310,7 @@ namespace RRaM.Core.Characters
             for (int i = 0; i < roster.Count; i++)
             {
                 NetworkCharacterPawn candidate = roster[i];
-                if (candidate == null || candidate.netId == 0 || candidate.CurrentNodeId != normalizedNodeId)
+                if (candidate == null || candidate.netId == 0 || candidate.IsDead || candidate.CurrentNodeId != normalizedNodeId)
                 {
                     continue;
                 }
@@ -506,7 +515,9 @@ namespace RRaM.Core.Characters
                     OwnerSlot = pawn.OwnerSlot,
                     CharacterType = pawn.CharacterType,
                     DisplayName = pawn.DisplayName,
-                    CurrentNodeId = pawn.CurrentNodeId
+                    CurrentNodeId = pawn.CurrentNodeId,
+                    Health = pawn.Health,
+                    IsDead = pawn.IsDead
                 });
             }
 

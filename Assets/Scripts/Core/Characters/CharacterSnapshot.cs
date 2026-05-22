@@ -7,5 +7,7 @@ namespace RRaM.Core.Characters
         public CharacterType CharacterType;
         public string DisplayName;
         public string CurrentNodeId;
+        public int Health;
+        public bool IsDead;
     }
 }

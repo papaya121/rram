@@ -16,6 +16,10 @@ namespace RRaM.Core.Characters
         [SyncVar] public string SpawnNodeId;
         [SyncVar(hook = nameof(OnNodeChanged))] public string CurrentNodeId;
         [SyncVar] public string DisplayName;
+        [SyncVar] public int Health = MaxHealth;
+        [SyncVar] public bool IsDead;
+
+        public const int MaxHealth = 100;
 
         [SerializeField] private bool useBoardMarkersOnly = true;
 
@@ -36,6 +40,8 @@ namespace RRaM.Core.Characters
             DisplayName = displayName;
             SpawnNodeId = startNodeId;
             CurrentNodeId = startNodeId;
+            Health = MaxHealth;
+            IsDead = false;
             ApplyWorldPosition();
         }
 
@@ -45,6 +51,11 @@ namespace RRaM.Core.Characters
         [Server]
         public void ServerSetCurrentNode(string nodeId)
         {
+            if (IsDead)
+            {
+                return;
+            }
+
             CurrentNodeId = nodeId;
             ApplyWorldPosition();
         }
@@ -60,13 +71,39 @@ namespace RRaM.Core.Characters
         [Server]
         public void ServerTeleportToNode(string nodeId)
         {
-            if (string.IsNullOrWhiteSpace(nodeId))
+            if (IsDead || string.IsNullOrWhiteSpace(nodeId))
             {
                 return;
             }
 
             CurrentNodeId = nodeId;
             ApplyWorldPosition();
+        }
+
+        [Server]
+        public void ServerApplyDamage(int amount)
+        {
+            if (IsDead || amount <= 0)
+            {
+                return;
+            }
+
+            Health = Mathf.Max(0, Health - amount);
+            if (Health <= 0)
+            {
+                IsDead = true;
+            }
+        }
+
+        [Server]
+        public void ServerHeal(int amount)
+        {
+            if (IsDead || amount <= 0)
+            {
+                return;
+            }
+
+            Health = Mathf.Min(MaxHealth, Health + amount);
         }
 
         /// <summary>
