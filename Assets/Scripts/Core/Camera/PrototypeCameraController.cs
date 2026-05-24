@@ -278,6 +278,12 @@ namespace RRaM.Core.CameraControl
 
         private int ResolveFocusPlayerSlot()
         {
+            LocalPlayerController localPlayer = LocalPlayerController.Instance;
+            if (localPlayer?.Player != null)
+            {
+                return localPlayer.Player.PlayerSlot;
+            }
+
             MatchContext context = MatchContext.Instance;
             TurnManager turnManager = context != null && context.TurnManager != null
                 ? context.TurnManager
@@ -289,12 +295,6 @@ namespace RRaM.Core.CameraControl
                 {
                     return activeSlot;
                 }
-            }
-
-            LocalPlayerController localPlayer = LocalPlayerController.Instance;
-            if (localPlayer?.Player != null)
-            {
-                return localPlayer.Player.PlayerSlot;
             }
 
             return -1;

@@ -34,11 +34,7 @@ namespace RRaM.Core.Cards
                 return;
             }
 
-            Mouse mouse = Mouse.current;
-            if (mouse == null)
-            {
-                OpenSelection();
-            }
+            OpenSelection();
         }
 
         private void OnMouseOver()
@@ -91,11 +87,19 @@ namespace RRaM.Core.Cards
             for (int i = 0; i < UiRaycastResults.Count; i++)
             {
                 GameObject hitObject = UiRaycastResults[i].gameObject;
-                if (hitObject != null && !hitObject.transform.IsChildOf(transform))
+                if (hitObject == null)
                 {
-                    UiRaycastResults.Clear();
-                    return true;
+                    continue;
                 }
+
+                Transform hitTransform = hitObject.transform;
+                if (hitTransform.IsChildOf(transform) || transform.IsChildOf(hitTransform))
+                {
+                    continue;
+                }
+
+                UiRaycastResults.Clear();
+                return true;
             }
 
             UiRaycastResults.Clear();

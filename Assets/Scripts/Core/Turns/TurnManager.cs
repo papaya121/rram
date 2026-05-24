@@ -79,15 +79,15 @@ namespace RRaM.Core.Turns
             starterPlayerIndex = orderedPlayerSlots.Count > 0 ? UnityEngine.Random.Range(0, orderedPlayerSlots.Count) : 0;
             currentPlayerIndex = starterPlayerIndex;
             SetupTurnsPerPlayer = Mathf.Max(1, setupTurnsPerPlayer);
-            playerZeroSetupTurnsRemaining = SetupTurnsPerPlayer;
-            playerOneSetupTurnsRemaining = SetupTurnsPerPlayer;
+            playerZeroSetupTurnsRemaining = 0;
+            playerOneSetupTurnsRemaining = 0;
             CurrentMode = TurnMode.Setup;
             TurnNumber = 1;
-            CurrentPlayerSlot = -1;
-            ActiveActionPlayerSlot = -1;
-            CurrentPhase = TurnPhase.WaitingForMove;
+            CurrentPlayerSlot = orderedPlayerSlots.Count > 0 ? orderedPlayerSlots[currentPlayerIndex] : -1;
+            ActiveActionPlayerSlot = CurrentPlayerSlot;
+            CurrentPhase = TurnPhase.WaitingForRoll;
             ActiveCharacterNetId = 0;
-            RemainingMovePoints = SetupTurnsPerPlayer;
+            RemainingMovePoints = 0;
             setupCompletionNotified = false;
             drawnDeckNodeIdsThisTurn.Clear();
             Dice.DiceManager.Instance?.ServerResetTurn();
@@ -178,11 +178,6 @@ namespace RRaM.Core.Turns
         /// </summary>
         public int GetCurrentMoveBudget()
         {
-            if (CurrentMode == TurnMode.Setup)
-            {
-                return RemainingMovePoints;
-            }
-
             return HasMovedThisTurn
                 ? GetRemainingMoveBudget()
                 : GetAvailableDiceTotal() + MoveBonus;
@@ -193,11 +188,6 @@ namespace RRaM.Core.Turns
         /// </summary>
         public int GetPrimaryMoveBudget()
         {
-            if (CurrentMode == TurnMode.Setup)
-            {
-                return RemainingMovePoints;
-            }
-
             return HasMovedThisTurn
                 ? 0
                 : GetSingleDieMoveBudget() + MoveBonus;
@@ -213,23 +203,17 @@ namespace RRaM.Core.Turns
 
         public int GetRemainingMoveBudget(int playerSlot)
         {
-            return CurrentMode == TurnMode.Setup
-                ? GetRemainingSetupTurns(playerSlot)
-                : GetRemainingMoveBudget();
+            return GetRemainingMoveBudget();
         }
 
         public int GetCurrentMoveBudget(int playerSlot)
         {
-            return CurrentMode == TurnMode.Setup
-                ? GetRemainingSetupTurns(playerSlot)
-                : GetCurrentMoveBudget();
+            return GetCurrentMoveBudget();
         }
 
         public int GetPrimaryMoveBudget(int playerSlot)
         {
-            return CurrentMode == TurnMode.Setup
-                ? GetRemainingSetupTurns(playerSlot)
-                : GetPrimaryMoveBudget();
+            return GetPrimaryMoveBudget();
         }
 
         /// <summary>
@@ -253,11 +237,6 @@ namespace RRaM.Core.Turns
         /// </summary>
         public bool CanPlayerSpendDieAction(int playerSlot)
         {
-            if (CurrentMode == TurnMode.Setup)
-            {
-                return false;
-            }
-
             return CanPlayerModifyCurrentAction(playerSlot) &&
                    CurrentPhase == TurnPhase.WaitingForMove &&
                    Dice.DiceManager.Instance != null &&
@@ -322,11 +301,6 @@ namespace RRaM.Core.Turns
         /// </summary>
         public bool CanPlayerTransferCard(int playerSlot)
         {
-            if (CurrentMode == TurnMode.Setup)
-            {
-                return false;
-            }
-
             return CanPlayerModifyCurrentAction(playerSlot) &&
                    Dice.DiceManager.Instance != null &&
                    Dice.DiceManager.Instance.HasRolled &&
@@ -378,11 +352,6 @@ namespace RRaM.Core.Turns
             if (characterNetId == 0 || !CanPlayerAct(playerSlot) || CurrentPhase != TurnPhase.WaitingForMove)
             {
                 return false;
-            }
-
-            if (CurrentMode == TurnMode.Setup)
-            {
-                return true;
             }
 
             bool isContinuingMovement =
@@ -450,40 +419,43 @@ namespace RRaM.Core.Turns
                 return false;
             }
 
-            if (CurrentMode == TurnMode.Setup)
-            {
-                int remainingSetupSteps = GetRemainingSetupTurns(playerSlot);
-                if (usedSteps > remainingSetupSteps)
-                {
-                    return false;
-                }
-
-                RemainingCardTransfers = 0;
-                ConsumeSetupSteps(playerSlot, usedSteps);
-                RemainingMovePoints = Mathf.Max(0, remainingSetupSteps - usedSteps);
-                HasMovedThisTurn = true;
-                ActiveCharacterNetId = 0;
-                TryNotifySetupCompleted();
-                return true;
-            }
-
             if (usedSteps > RemainingMovePoints)
             {
                 return false;
             }
 
             RemainingCardTransfers = 0;
-            RemainingMovePoints = Mathf.Max(0, RemainingMovePoints - usedSteps);
-            HasMovedThisTurn = true;
-            DieAAvailable = false;
-            DieBAvailable = false;
-            RefreshRemainingDieActions();
-
-            if (RemainingMovePoints <= 0)
+            if (HasMovedThisTurn)
             {
-                CurrentPhase = TurnPhase.WaitingForEndTurn;
+                RemainingMovePoints = Mathf.Max(0, RemainingMovePoints - usedSteps);
+            }
+            else if (TryConsumeMovementDie(usedSteps, out int dieValue))
+            {
+                LastConsumedDieValue = dieValue;
+                RemainingMovePoints = Mathf.Max(0, dieValue + MoveBonus - usedSteps);
+            }
+            else
+            {
+                int diceTotal = GetAvailableDiceTotal();
+                if (usedSteps > diceTotal + MoveBonus || !TryConsumeAllAvailableDice())
+                {
+                    return false;
+                }
+
+                LastConsumedDieValue = diceTotal;
+                RemainingMovePoints = Mathf.Max(0, diceTotal + MoveBonus - usedSteps);
+                RefreshRemainingDieActions();
             }
 
+            HasMovedThisTurn = true;
+
+            if (RemainingMovePoints <= 0 && RemainingDieActions <= 0)
+            {
+                CurrentPhase = TurnPhase.WaitingForEndTurn;
+                return true;
+            }
+
+            CurrentPhase = TurnPhase.WaitingForMove;
             return true;
         }
 
@@ -539,17 +511,20 @@ namespace RRaM.Core.Turns
 
             if (CurrentMode == TurnMode.Setup)
             {
-                if (!CanPlayerFinishSetupAction(player.PlayerSlot))
+                if (player.PlayerSlot != CurrentPlayerSlot || (!force && !CanPlayerFinishSetupAction(player.PlayerSlot)))
                 {
                     return false;
                 }
 
-                ClearSetupSteps(player.PlayerSlot);
-                CompletedTurnCount++;
-                TurnNumber++;
-                ClearPlayerSelections(Match.MatchManager.Instance?.Players);
-                TryNotifySetupCompleted();
-                return true;
+                if (WillSetupRemainAfterCompletedTurn())
+                {
+                    AdvanceSetupTurnOrder();
+                }
+                else
+                {
+                    CurrentPlayerSlot = -1;
+                    ActiveActionPlayerSlot = -1;
+                }
             }
             else
             {
@@ -574,13 +549,9 @@ namespace RRaM.Core.Turns
             HasMovedThisTurn = false;
             ActiveCharacterNetId = 0;
             LastConsumedDieValue = 0;
-            CurrentPhase = CurrentMode == TurnMode.Setup && !AreSetupTurnsFinished()
-                ? TurnPhase.WaitingForMove
+            CurrentPhase = CurrentMode == TurnMode.Setup && AreSetupTurnsFinished()
+                ? TurnPhase.WaitingForEndTurn
                 : TurnPhase.WaitingForRoll;
-            if (CurrentMode == TurnMode.Setup && !AreSetupTurnsFinished())
-            {
-                RemainingMovePoints = GetRemainingSetupTurns(CurrentPlayerSlot);
-            }
 
             drawnDeckNodeIdsThisTurn.Clear();
             Dice.DiceManager.Instance?.ServerResetTurn();
@@ -593,17 +564,12 @@ namespace RRaM.Core.Turns
 
         public bool AreSetupTurnsFinished()
         {
-            return playerZeroSetupTurnsRemaining <= 0 && playerOneSetupTurnsRemaining <= 0;
+            return CurrentMode == TurnMode.Setup && CompletedTurnCount >= SetupTurnsPerPlayer;
         }
 
         public int GetRemainingSetupTurns(int playerSlot)
         {
-            return playerSlot switch
-            {
-                0 => Mathf.Max(0, playerZeroSetupTurnsRemaining),
-                1 => Mathf.Max(0, playerOneSetupTurnsRemaining),
-                _ => 0
-            };
+            return Mathf.Max(0, SetupTurnsPerPlayer - CompletedTurnCount);
         }
 
         public bool CanPlayerAct(int playerSlot)
@@ -615,8 +581,7 @@ namespace RRaM.Core.Turns
 
             if (CurrentMode == TurnMode.Setup)
             {
-                int remainingTurns = GetRemainingSetupTurns(playerSlot);
-                return remainingTurns > 0 && CurrentPhase == TurnPhase.WaitingForMove;
+                return playerSlot == CurrentPlayerSlot && !AreSetupTurnsFinished();
             }
 
             return playerSlot == CurrentPlayerSlot;
@@ -624,16 +589,11 @@ namespace RRaM.Core.Turns
 
         public bool CanPlayerRoll(int playerSlot)
         {
-            return CurrentMode != TurnMode.Setup && CanPlayerAct(playerSlot) && CurrentPhase == TurnPhase.WaitingForRoll;
+            return CanPlayerAct(playerSlot) && CurrentPhase == TurnPhase.WaitingForRoll;
         }
 
         public bool CanPlayerMove(int playerSlot)
         {
-            if (CurrentMode == TurnMode.Setup)
-            {
-                return CanPlayerModifyCurrentAction(playerSlot) && GetRemainingSetupTurns(playerSlot) > 0;
-            }
-
             return CanPlayerModifyCurrentAction(playerSlot) &&
                    CurrentPhase == TurnPhase.WaitingForMove &&
                    Dice.DiceManager.Instance != null &&
@@ -647,11 +607,6 @@ namespace RRaM.Core.Turns
             if (!CanPlayerModifyCurrentAction(playerSlot))
             {
                 return false;
-            }
-
-            if (CurrentMode == TurnMode.Setup)
-            {
-                return CurrentPhase == TurnPhase.WaitingForMove;
             }
 
             if (CurrentPhase == TurnPhase.WaitingForEndTurn)
@@ -669,11 +624,6 @@ namespace RRaM.Core.Turns
                 CurrentPhase != TurnPhase.WaitingForMove)
             {
                 return false;
-            }
-
-            if (CurrentMode == TurnMode.Setup)
-            {
-                return GetRemainingSetupTurns(playerSlot) > 0;
             }
 
             if (Dice.DiceManager.Instance == null || !Dice.DiceManager.Instance.HasRolled)
@@ -700,7 +650,7 @@ namespace RRaM.Core.Turns
 
             if (CurrentMode == TurnMode.Setup)
             {
-                return CurrentPhase == TurnPhase.WaitingForMove && GetRemainingSetupTurns(playerSlot) > 0;
+                return playerSlot == CurrentPlayerSlot && !AreSetupTurnsFinished();
             }
 
             return playerSlot == CurrentPlayerSlot;
@@ -710,8 +660,8 @@ namespace RRaM.Core.Turns
         private bool CanPlayerFinishSetupAction(int playerSlot)
         {
             return CurrentMode == TurnMode.Setup &&
-                   CurrentPhase == TurnPhase.WaitingForMove &&
-                   GetRemainingSetupTurns(playerSlot) > 0;
+                   playerSlot == CurrentPlayerSlot &&
+                   CanPlayerEndTurn(playerSlot);
         }
 
         [Server]
@@ -759,22 +709,9 @@ namespace RRaM.Core.Turns
                 return;
             }
 
-            for (int i = 0; i < orderedPlayerSlots.Count; i++)
-            {
-                currentPlayerIndex = (currentPlayerIndex + 1) % orderedPlayerSlots.Count;
-                int nextPlayerSlot = orderedPlayerSlots[currentPlayerIndex];
-                if (GetRemainingSetupTurns(nextPlayerSlot) <= 0)
-                {
-                    continue;
-                }
-
-                CurrentPlayerSlot = nextPlayerSlot;
-                ActiveActionPlayerSlot = nextPlayerSlot;
-                return;
-            }
-
-            CurrentPlayerSlot = -1;
-            ActiveActionPlayerSlot = -1;
+            currentPlayerIndex = (currentPlayerIndex + 1) % orderedPlayerSlots.Count;
+            CurrentPlayerSlot = orderedPlayerSlots[currentPlayerIndex];
+            ActiveActionPlayerSlot = CurrentPlayerSlot;
         }
 
         [Server]
@@ -792,6 +729,13 @@ namespace RRaM.Core.Turns
             RemainingMovePoints = 0;
             CurrentPhase = TurnPhase.WaitingForEndTurn;
             ServerTurnCompleted?.Invoke(CompletedTurnCount);
+        }
+
+        private bool WillSetupRemainAfterCompletedTurn()
+        {
+            return CurrentMode == TurnMode.Setup &&
+                   CompletedTurnCount + 1 < SetupTurnsPerPlayer &&
+                   orderedPlayerSlots.Count > 0;
         }
 
         private int ResolveActivePlayerSlot()

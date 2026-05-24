@@ -41,11 +41,20 @@ namespace RRaM.Core.Cards
             runtimeDeck.Clear();
             for (int i = 0; i < cards.Count; i++)
             {
-                if (cards[i] != null)
+                BaseCard card = cards[i];
+                if (card == null)
                 {
-                    runtimeDeck.Add(cards[i]);
+                    continue;
+                }
+
+                int copies = ResolveRuntimeCopies(card);
+                for (int copyIndex = 0; copyIndex < copies; copyIndex++)
+                {
+                    runtimeDeck.Add(card);
                 }
             }
+
+            ShuffleRuntimeDeck();
         }
 
         public BaseCard Draw()
@@ -166,6 +175,21 @@ namespace RRaM.Core.Cards
                     "ClubCard" or
                     "BowCard",
                 _ => true
+            };
+        }
+
+        private static int ResolveRuntimeCopies(BaseCard card)
+        {
+            return card.CardId switch
+            {
+                "DirtyMixedIronOreCard" => 6,
+                "RamCard" => 5,
+                "SheepWoolCard" => 5,
+                "BearHideCard" => 4,
+                "FlexibleStickCard" => 3,
+                "GoldNuggetCard" => 2,
+                "SkipTurnCard" => 1,
+                _ => 0
             };
         }
 

@@ -198,6 +198,7 @@ namespace RRaM.Core.Cards
                 !TurnManager.Instance.ServerIsCurrentPlayer(player) ||
                 !TurnManager.Instance.CanPlayerSpendDieAction(player.PlayerSlot) ||
                 !cardInstance.Data.IsPlayable ||
+                cardInstance.RequiresTransferBeforeUse ||
                 cardInstance.ownerNetId != player.netId)
             {
                 return false;
@@ -419,7 +420,8 @@ namespace RRaM.Core.Cards
             NetworkPlayerConnection player,
             BaseCard cardData,
             NetworkCharacterPawn assignedCharacter,
-            int handSlotIndex)
+            int handSlotIndex,
+            bool requireTransferBeforeUse = false)
         {
             Deck deck = GetDeck();
             if (player == null || cardData == null || deck == null || deck.CardPrefab == null)
@@ -434,7 +436,8 @@ namespace RRaM.Core.Cards
                 player.netId,
                 assignedCharacter != null ? assignedCharacter.netId : 0,
                 Mathf.Clamp(handSlotIndex, 0, HandSlotCount - 1),
-                player.PlayerSlot);
+                player.PlayerSlot,
+                requireTransferBeforeUse);
             NetworkServer.Spawn(cardInstance.gameObject);
 
             if (!cardsByPlayerSlot.TryGetValue(player.PlayerSlot, out List<CardInstance> cards))
@@ -618,6 +621,12 @@ namespace RRaM.Core.Cards
         }
 
         [Server]
+        public bool ServerHasCraftingTool(NetworkPlayerConnection player)
+        {
+            return HasOwnedCard(player, "HammerCard");
+        }
+
+        [Server]
         public bool ServerTryConsumeCards(NetworkPlayerConnection player, params string[] cardIds)
         {
             return ServerTryConsumeCardsPreferCharacter(player, 0, cardIds);
@@ -777,6 +786,20 @@ namespace RRaM.Core.Cards
             character.ServerHeal(amount);
             CharacterManager.Instance?.ServerSyncPlayerCharacters(player);
             return true;
+        }
+
+        [Server]
+        public bool ServerTryDamageOwnedCharacter(NetworkPlayerConnection player, NetworkCharacterPawn character, int amount)
+        {
+            if (player == null || character == null || character.OwnerSlot != player.PlayerSlot || character.IsDead || amount <= 0)
+            {
+                return false;
+            }
+
+            character.ServerApplyDamage(amount);
+            CharacterManager.Instance?.ServerSyncPlayerCharacters(player);
+            Match.MatchManager.Instance?.ServerCheckEliminationVictory();
+            return !character.IsDead;
         }
 
         [Server]
@@ -1198,6 +1221,7 @@ namespace RRaM.Core.Cards
                     DisplayName = card.Data.DisplayName,
                     IsConsumable = card.Data.isConsumable,
                     IsPlayable = card.Data.IsPlayable,
+                    RequiresTransferBeforeUse = card.RequiresTransferBeforeUse,
                     MinimumDieValue = card.Data.MinimumDieValue,
                     HandSlotIndex = card.HandSlotIndex
                 });

@@ -6,7 +6,8 @@ namespace RRaM.Core.Cards
     public enum RulebookCardImplementationStatus : byte
     {
         RulesOnly = 0,
-        ReadyForImplementation = 1
+        ReadyForImplementation = 1,
+        Implemented = 2
     }
 
     [CreateAssetMenu(menuName = "Cards/Rulebook Card", fileName = "RulebookCard")]
@@ -19,6 +20,7 @@ namespace RRaM.Core.Cards
         public override bool IsPlayable => ResolveKind() != RulebookCardKind.Resource;
         public override int MinimumDieValue => CardId switch
         {
+            "BagCard" => 2,
             "BagRecipeCard" => 4,
             "BowRecipeCard" => 3,
             "DirtyMixedIronOreCard" => 2,
@@ -61,16 +63,17 @@ namespace RRaM.Core.Cards
                              (cards.ServerCanGrantCardsAfterConsuming(
                                   context.player,
                                   context.character,
-                                  currentCardNetId,
+                                  0,
                                   new[] { "DirtyMixedIronOreCard", "DirtyMixedIronOreCard", "DirtyMixedIronOreCard" },
                                   "MediumQualityIronOreCard") ||
                               cards.ServerCanGrantCardsAfterConsuming(
                                   context.player,
                                   context.character,
-                                  currentCardNetId,
+                                  0,
                                   new[] { "GoldNuggetCard" },
                                   "MediumQualityIronOreCard")),
-                "BagRecipeCard" => cards.ServerHasCards(context.player, "ShamanCarpetCard") &&
+                "BagRecipeCard" => HasRequiredCraftingTool(cards, context.player, CardId) &&
+                                   cards.ServerHasCards(context.player, "ShamanCarpetCard") &&
                                    cards.ServerCanGrantCardsToCharacterTypeAfterConsuming(
                                        context.player,
                                        CharacterType.BlacksmithAssistant,
@@ -79,13 +82,15 @@ namespace RRaM.Core.Cards
                                        "BagCard"),
                 "BowCard" => context.character.CharacterType == CharacterType.Hunter &&
                              cards.ServerHasEnemyInRange(context.player, context.character, 2, 3),
-                "BowRecipeCard" => cards.ServerCanGrantCardsToCharacterTypeAfterConsuming(
-                    context.player,
-                    CharacterType.Hunter,
-                    currentCardNetId,
-                    new[] { "FlexibleStickCard", "RamWoolThreadBallCard" },
-                    "BowCard"),
-                "ClubBlueprintCard" => cards.ServerCanGrantCardsToCharacterTypeAfterConsuming(
+                "BowRecipeCard" => HasRequiredCraftingTool(cards, context.player, CardId) &&
+                                   cards.ServerCanGrantCardsToCharacterTypeAfterConsuming(
+                                       context.player,
+                                       CharacterType.Hunter,
+                                       currentCardNetId,
+                                       new[] { "FlexibleStickCard", "RamWoolThreadBallCard" },
+                                       "BowCard"),
+                "ClubBlueprintCard" => HasRequiredCraftingTool(cards, context.player, CardId) &&
+                                       (cards.ServerCanGrantCardsToCharacterTypeAfterConsuming(
                                            context.player,
                                            CharacterType.Warrior,
                                            currentCardNetId,
@@ -96,7 +101,7 @@ namespace RRaM.Core.Cards
                                            CharacterType.Warrior,
                                            currentCardNetId,
                                            new[] { "RamHideCard" },
-                                           "ClubCard"),
+                                           "ClubCard")),
                 "ClubCard" => context.character.CharacterType == CharacterType.Warrior &&
                               cards.ServerHasEnemyInRange(context.player, context.character, 1),
                 "DirtyMixedIronOreCard" => context.character.CharacterType == CharacterType.Blacksmith &&
@@ -110,7 +115,8 @@ namespace RRaM.Core.Cards
                     currentCardNetId,
                     new[] { "MixedIronOreCard" },
                     "HammerCard"),
-                "RamCard" => cards.ServerCanGrantCards(context.player, context.character, currentCardNetId, "RamHideCard", "SheepWoolCard"),
+                "RamCard" => context.character.Health > 1 &&
+                             cards.ServerCanGrantCards(context.player, context.character, currentCardNetId, "RamHideCard"),
                 "RamHideCard" => cards.ServerCanGrantCards(context.player, context.character, currentCardNetId, ResolveRamHideProduct(context)),
                 "ShamanCarpetCard" => context.character.CharacterType == CharacterType.Shaman &&
                                       context.character.Health < NetworkCharacterPawn.MaxHealth,
@@ -182,8 +188,10 @@ namespace RRaM.Core.Cards
                     }
                     break;
                 case "RamCard":
-                    cards.ServerTryGrantCard(context.player, context.character, "RamHideCard", currentCardNetId);
-                    cards.ServerTryGrantCard(context.player, context.character, "SheepWoolCard", currentCardNetId);
+                    if (cards.ServerTryDamageOwnedCharacter(context.player, context.character, 1))
+                    {
+                        cards.ServerTryGrantCard(context.player, context.character, "RamHideCard", currentCardNetId);
+                    }
                     break;
                 case "RamHideCard":
                     cards.ServerTryGrantCard(context.player, context.character, ResolveRamHideProduct(context), currentCardNetId);
@@ -208,6 +216,16 @@ namespace RRaM.Core.Cards
             return context?.character != null && context.character.CharacterType == CharacterType.Shaman
                 ? "RamHideThreadCard"
                 : "CleanedRamHideCard";
+        }
+
+        private static bool HasRequiredCraftingTool(CardManager cards, RRaM.Core.Networking.NetworkPlayerConnection player, string cardId)
+        {
+            return !RequiresCraftingTool(cardId) || cards.ServerHasCraftingTool(player);
+        }
+
+        private static bool RequiresCraftingTool(string cardId)
+        {
+            return cardId is "BagRecipeCard" or "BowRecipeCard" or "ClubBlueprintCard";
         }
 
         private RulebookCardKind ResolveKind()

@@ -19,6 +19,7 @@ namespace RRaM.Core.Cards
         [SyncVar(hook = nameof(OnOwnerNetIdChanged))] public uint ownerNetId;
         [SyncVar(hook = nameof(OnAssignedCharacterNetIdChanged))] private uint assignedCharacterNetId;
         [SyncVar(hook = nameof(OnHandSlotIndexChanged))] private int handSlotIndex;
+        [SyncVar] private bool requiresTransferBeforeUse;
         [SyncVar] private int ownerPlayerSlot = -1;
 
         private HandController boundHandController;
@@ -36,6 +37,7 @@ namespace RRaM.Core.Cards
         public uint AssignedCharacterNetId => assignedCharacterNetId;
         public int HandSlotIndex => handSlotIndex;
         public int OwnerPlayerSlot => ownerPlayerSlot;
+        public bool RequiresTransferBeforeUse => requiresTransferBeforeUse;
         public bool IsPendingConsume => isPendingConsume;
         public bool IsInSelectionPanel => isInSelectionPanel;
 
@@ -54,12 +56,19 @@ namespace RRaM.Core.Cards
         [Server]
         public void Initialize(BaseCard cardData, uint ownerId, uint characterNetId, int slotIndex, int playerSlot)
         {
+            Initialize(cardData, ownerId, characterNetId, slotIndex, playerSlot, false);
+        }
+
+        [Server]
+        public void Initialize(BaseCard cardData, uint ownerId, uint characterNetId, int slotIndex, int playerSlot, bool requireTransferBeforeUse)
+        {
             data = cardData;
             cardId = cardData != null ? cardData.CardId : string.Empty;
             ownerNetId = ownerId;
             assignedCharacterNetId = characterNetId;
             handSlotIndex = slotIndex;
             ownerPlayerSlot = playerSlot;
+            requiresTransferBeforeUse = requireTransferBeforeUse;
         }
 
         [Server]
@@ -67,6 +76,7 @@ namespace RRaM.Core.Cards
         {
             assignedCharacterNetId = characterNetId;
             handSlotIndex = slotIndex;
+            requiresTransferBeforeUse = false;
         }
 
         [Server]
@@ -76,6 +86,7 @@ namespace RRaM.Core.Cards
             ownerPlayerSlot = playerSlot;
             assignedCharacterNetId = characterNetId;
             handSlotIndex = slotIndex;
+            requiresTransferBeforeUse = false;
         }
 
         public override void OnStartClient()
@@ -118,6 +129,10 @@ namespace RRaM.Core.Cards
             }
 
             RefreshView(force: false);
+            if (!PassesLocalCharacterFilter())
+            {
+                animator?.ClearHoverImmediate();
+            }
         }
 
         public void TryUseFromLocalClient()
@@ -143,7 +158,11 @@ namespace RRaM.Core.Cards
 
         public bool CanSelectFromLocalClient()
         {
-            return isClient && !isUsePending && CanLocalPlayerInteract();
+            return isClient &&
+                   !isUsePending &&
+                   !requiresTransferBeforeUse &&
+                   CanLocalPlayerInteract() &&
+                   PassesLocalCharacterFilter();
         }
 
         public bool CanDiscardFromLocalClient()
@@ -220,7 +239,7 @@ namespace RRaM.Core.Cards
                 return;
             }
 
-            if (isUsePending || !CanLocalPlayerInteract())
+            if (isUsePending || !CanLocalPlayerInteract() || !PassesLocalCharacterFilter())
             {
                 if (!hovered)
                 {
@@ -321,7 +340,7 @@ namespace RRaM.Core.Cards
                 return;
             }
 
-            if (!hasBoundToHand && animate && animator != null)
+            if (!hasBoundToHand && animate && animator != null && !hasResolvedPresentation)
             {
                 StartCoroutine(PlaySpawnAnimation(handController));
                 return;
@@ -393,6 +412,18 @@ namespace RRaM.Core.Cards
             return CanLocalPlayerInteract();
         }
 
+        private bool PassesLocalCharacterFilter()
+        {
+            LocalPlayerController local = LocalPlayerController.Instance;
+            if (local == null || local.Player == null)
+            {
+                return true;
+            }
+
+            uint selectedCharacterNetId = local.EffectiveSelectedCharacterNetId;
+            return selectedCharacterNetId == 0 || assignedCharacterNetId == selectedCharacterNetId;
+        }
+
         private CardContext BuildLocalContext(NetworkPlayerConnection player)
         {
             return new CardContext
@@ -448,13 +479,11 @@ namespace RRaM.Core.Cards
             }
 
             hasBoundToHand = false;
-            hasResolvedPresentation = false;
             TryBindToHand(animate: true);
         }
 
         private void OnAssignedCharacterNetIdChanged(uint _, uint __)
         {
-            hasResolvedPresentation = false;
             RefreshView(force: true);
         }
     }

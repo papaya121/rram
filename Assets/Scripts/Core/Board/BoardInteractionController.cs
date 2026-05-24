@@ -314,7 +314,7 @@ namespace RRaM.Core.Board
             bool isSetupMove = turnManager.IsSetupPhase;
             bool movementPhaseReady =
                 turnManager.CanPlayerMove(localSlot) &&
-                (isSetupMove || diceManager.HasRolled) &&
+                diceManager.HasRolled &&
                 turnManager.CurrentPhase == TurnPhase.WaitingForMove &&
                 turnManager.GetRemainingMoveBudget(localSlot) > 0;
             if (!movementPhaseReady)

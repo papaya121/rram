@@ -269,19 +269,16 @@ namespace RRaM.Core.UI
                 GUILayout.Space(10f);
                 GUILayout.BeginHorizontal();
                 GUILayout.FlexibleSpace();
-                if (!turnManager.IsSetupPhase)
+                GUI.enabled = turnManager.CanPlayerRoll(localPlayerSlot);
+                if (GUILayout.Button("Бросить кубики", wrappedButtonStyle, GUILayout.Width(GetSplitButtonWidth()), GUILayout.MinHeight(34f)))
                 {
-                    GUI.enabled = turnManager.CanPlayerRoll(localPlayerSlot);
-                    if (GUILayout.Button("Бросить кубики", wrappedButtonStyle, GUILayout.Width(GetSplitButtonWidth()), GUILayout.MinHeight(34f)))
-                    {
-                        RequestRollDice();
-                    }
-
-                    GUILayout.Space(6f);
+                    RequestRollDice();
                 }
 
+                GUILayout.Space(6f);
+
                 GUI.enabled = turnManager.CanPlayerEndTurn(localPlayerSlot);
-                string endTurnLabel = turnManager.IsSetupPhase ? "Готов" : "Завершить ход";
+                string endTurnLabel = "Завершить ход";
                 if (GUILayout.Button(endTurnLabel, wrappedButtonStyle, GUILayout.Width(GetSplitButtonWidth()), GUILayout.MinHeight(34f)))
                 {
                     local.EndTurn();
@@ -312,6 +309,7 @@ namespace RRaM.Core.UI
             GUILayout.Space(8f);
             int localPlayerSlot = local.Player.PlayerSlot;
             bool canActNow = turnManager.CanPlayerAct(localPlayerSlot);
+            bool canSeeRolledDice = diceManager.HasRolled && diceManager.LastRollPlayerSlot == localPlayerSlot;
             DrawWrappedLabel("Матч");
             DrawWrappedLabel($"Вы: Игрок {localPlayerSlot + 1}");
             DrawWrappedLabel($"Режим: {DescribeMode(turnManager.CurrentMode)}");
@@ -322,29 +320,18 @@ namespace RRaM.Core.UI
             DrawWrappedLabel(DescribeDwarfCountdown(matchManager));
             DrawWrappedLabel(GetActionHint(local, turnManager, diceManager));
             GUILayout.Space(4f);
-            if (!turnManager.IsSetupPhase)
-            {
-                DrawWrappedLabel("Публичный бросок кубиков");
-                DrawWrappedLabel(DescribeDice(diceManager, localPlayerSlot));
-                if (!canActNow)
-                {
-                    DrawWrappedLabel("Это общий результат матча. Его видят оба игрока.");
-                }
-            }
+            DrawWrappedLabel(DescribeDice(diceManager, localPlayerSlot));
 
-            if (!turnManager.IsSetupPhase)
+            if (canSeeRolledDice)
             {
                 DrawWrappedLabel($"Неиспользованных действий кубиков: {turnManager.GetRemainingDieActions()}");
-            }
 
-            if (turnManager.GetRemainingCardTransfers() > 0)
-            {
-                DrawWrappedLabel($"Оставшихся передач карт: {turnManager.GetRemainingCardTransfers()}");
-            }
+                if (turnManager.GetRemainingCardTransfers() > 0)
+                {
+                    DrawWrappedLabel($"Оставшихся передач карт: {turnManager.GetRemainingCardTransfers()}");
+                }
 
-            DrawWrappedLabel($"Бонус к перемещению: {turnManager.MoveBonus}");
-            if (diceManager.HasRolled)
-            {
+                DrawWrappedLabel($"Бонус к перемещению: {turnManager.MoveBonus}");
                 DrawWrappedLabel($"Зелёная зона: до {turnManager.GetPrimaryMoveBudget()} шагов. Жёлтая зона: до {turnManager.GetRemainingMoveBudget()} шагов.");
             }
 
@@ -418,7 +405,9 @@ namespace RRaM.Core.UI
                 return;
             }
 
-            if (!diceManager.HasRolled || matchManager.State == MatchState.Lobby)
+            if (!diceManager.HasRolled ||
+                diceManager.LastRollPlayerSlot != local.Player.PlayerSlot ||
+                matchManager.State == MatchState.Lobby)
             {
                 return;
             }
@@ -555,7 +544,7 @@ namespace RRaM.Core.UI
         {
             if (Board.BoardGraph.Instance == null ||
                 local.Player.SelectedCharacterNetId == 0 ||
-                (!turnManager.IsSetupPhase && diceManager.Total <= 0))
+                diceManager.Total <= 0)
             {
                 return;
             }
@@ -570,27 +559,16 @@ namespace RRaM.Core.UI
             int moveBudget = turnManager.GetCurrentMoveBudget(localPlayerSlot);
             int remainingMoveBudget = turnManager.GetRemainingMoveBudget(localPlayerSlot);
             GUILayout.Space(4f);
-            if (turnManager.IsSetupPhase)
-            {
-                DrawWrappedLabel($"Стартовое перемещение: осталось {remainingMoveBudget} из {turnManager.SetupTurnsPerPlayer} шагов. Их можно распределить между любыми персонажами.");
-            }
-            else
-            {
-                DrawWrappedLabel($"Перемещение: зелёный до {turnManager.GetPrimaryMoveBudget()} шагов, жёлтый до {remainingMoveBudget} из {moveBudget}.");
-            }
+            DrawWrappedLabel($"Перемещение: зелёный до {turnManager.GetPrimaryMoveBudget()} шагов, жёлтый до {remainingMoveBudget} из {moveBudget}.");
 
             if (!turnManager.CanPlayerMove(local.Player.PlayerSlot))
             {
-                DrawWrappedLabel(turnManager.IsSetupPhase
-                    ? "Выберите персонажа или завершите стартовую расстановку."
-                    : "Бросьте кубики, выберите персонажа или используйте оставшееся действие кубика.");
+                DrawWrappedLabel("Бросьте кубики, выберите персонажа или используйте оставшееся действие кубика.");
                 return;
             }
 
             List<string> destinations = Board.BoardGraph.Instance.GetReachableDestinations(selected.CurrentNodeId, remainingMoveBudget);
-            DrawWrappedLabel(turnManager.IsSetupPhase
-                ? "Наводите курсор на узлы поля: зелёные точки доступны в пределах стартового пула, красные недоступны."
-                : "Наводите курсор на узлы поля: зелёный тратит первый кубик, жёлтый тратит оба, красный недоступен.");
+            DrawWrappedLabel("Наводите курсор на узлы поля: зелёный тратит первый кубик, жёлтый тратит оба, красный недоступен.");
             DrawWrappedLabel($"Доступных точек назначения сейчас: {destinations.Count}.");
         }
 
@@ -872,8 +850,8 @@ namespace RRaM.Core.UI
                 return "Дварфы уже вышли и участвуют в матче";
             }
 
-            int remainingSteps = turnManager.GetRemainingSetupTurns(0) + turnManager.GetRemainingSetupTurns(1);
-            return $"До выхода дварфов осталось распределить стартовых шагов: {remainingSteps}";
+            int remainingTurns = turnManager.GetRemainingSetupTurns(0);
+            return $"До выхода дварфов осталось стартовых ходов: {remainingTurns}";
         }
 
         private static string DescribeDice(DiceManager diceManager, int localPlayerSlot)
@@ -886,6 +864,11 @@ namespace RRaM.Core.UI
             string owner = diceManager.LastRollPlayerSlot == localPlayerSlot
                 ? "Вы"
                 : $"Игрок {diceManager.LastRollPlayerSlot + 1}";
+            if (diceManager.LastRollPlayerSlot != localPlayerSlot)
+            {
+                return "Соперник бросил кубики. Значения скрыты.";
+            }
+
             return $"{owner}: {diceManager.DieA} + {diceManager.DieB} = {diceManager.Total}";
         }
 
@@ -930,8 +913,8 @@ namespace RRaM.Core.UI
                 if (turnManager.IsSetupPhase)
                 {
                     return turnManager.GetRemainingSetupTurns(localPlayerSlot) <= 0
-                        ? "Вы завершили стартовую расстановку. Ждите готовности соперника."
-                        : "Стартовая расстановка: выберите персонажа и распределите свои шаги.";
+                        ? "Первые стартовые ходы завершены."
+                        : "Сейчас стартовый ход соперника. Значения его кубиков скрыты.";
                 }
 
                 return "Сейчас ход соперника. Ждите его действий.";
@@ -940,15 +923,15 @@ namespace RRaM.Core.UI
             return turnManager.CurrentPhase switch
             {
                 TurnPhase.WaitingForRoll => turnManager.IsSetupPhase
-                    ? "Стартовая фаза: выберите персонажа и распределите стартовые шаги."
+                    ? "Стартовый ход: бросьте кубики, затем выберите персонажа."
                     : "Ваш ход: бросьте кубики, затем выберите персонажа.",
                 TurnPhase.WaitingForMove when local.Player.SelectedCharacterNetId == 0 => "Сначала выберите персонажа.",
                 TurnPhase.WaitingForMove when !turnManager.IsSetupPhase && !diceManager.HasRolled => "Сначала бросьте кубики.",
-                TurnPhase.WaitingForMove when turnManager.IsSetupPhase => "Стартовая фаза: распределите 10 шагов между своими персонажами. Персонажа можно менять после каждого перемещения.",
+                TurnPhase.WaitingForMove when turnManager.IsSetupPhase => "Стартовый ход: походите выбранным персонажем по результату броска.",
                 TurnPhase.WaitingForMove when turnManager.HasMovedThisTurn && turnManager.GetRemainingMoveBudget() > 0 => "Можно продолжать движение только тем персонажем, который уже начал ходить, либо завершить ход.",
                 TurnPhase.WaitingForMove => "Можно действовать выбранным персонажем: перемещаться, брать карту, использовать карту или передавать карты.",
                 TurnPhase.WaitingForEndTurn => turnManager.IsSetupPhase
-                    ? "Стартовые шаги распределены. Завершите стартовую расстановку."
+                    ? "Стартовое действие завершено. Завершите ход."
                     : "Ваш ход: перемещение завершено, можно завершать ход.",
                 _ => "Следуйте текущей фазе хода."
             };
@@ -961,8 +944,7 @@ namespace RRaM.Core.UI
                 return "Стартовая подготовка завершена.";
             }
 
-            int opponentSlot = localPlayerSlot == 0 ? 1 : 0;
-            return $"Стартовые шаги: у вас {turnManager.GetRemainingSetupTurns(localPlayerSlot)}, у соперника {turnManager.GetRemainingSetupTurns(opponentSlot)}.";
+            return $"Стартовые ходы до выхода дварфов: {turnManager.GetRemainingSetupTurns(localPlayerSlot)}.";
         }
 
         private static string GetTurnWord(int value)
@@ -991,6 +973,7 @@ namespace RRaM.Core.UI
 
             return card.NetId != 0 &&
                    card.IsPlayable &&
+                   !card.RequiresTransferBeforeUse &&
                    TurnManager.Instance.CanPlayerSelectCharacter(local.Player.PlayerSlot, card.AssignedCharacterNetId) &&
                    TurnManager.Instance.CanPlayerSpendDieActionWithMinimum(local.Player.PlayerSlot, card.MinimumDieValue) &&
                    HasLocalCardRequirements(local.Player, card);
@@ -1007,13 +990,16 @@ namespace RRaM.Core.UI
             {
                 "BagCard" => CountLocalCards(player, "DirtyMixedIronOreCard") >= 3 ||
                              CountLocalCards(player, "GoldNuggetCard") >= 1,
-                "BagRecipeCard" => CountLocalCards(player, "CleanedRamHideCard") >= 1 &&
+                "BagRecipeCard" => CountLocalCards(player, "HammerCard") >= 1 &&
+                                   CountLocalCards(player, "CleanedRamHideCard") >= 1 &&
                                    CountLocalCards(player, "RamWoolThreadBallCard") >= 1 &&
                                    CountLocalCards(player, "ShamanCarpetCard") >= 1,
-                "BowRecipeCard" => CountLocalCards(player, "FlexibleStickCard") >= 1 &&
+                "BowRecipeCard" => CountLocalCards(player, "HammerCard") >= 1 &&
+                                   CountLocalCards(player, "FlexibleStickCard") >= 1 &&
                                    CountLocalCards(player, "RamWoolThreadBallCard") >= 1,
-                "ClubBlueprintCard" => CountLocalCards(player, "BearHideCard") >= 1 ||
-                                       CountLocalCards(player, "RamHideCard") >= 1,
+                "ClubBlueprintCard" => CountLocalCards(player, "HammerCard") >= 1 &&
+                                       (CountLocalCards(player, "BearHideCard") >= 1 ||
+                                        CountLocalCards(player, "RamHideCard") >= 1),
                 "HammerBlueprintCard" => CountLocalCards(player, "MixedIronOreCard") >= 1,
                 "ShamanCarpetRecipeCard" => CountLocalCards(player, "BearHideCard") >= 1 &&
                                             CountLocalCards(player, "RamHideThreadCard") >= 1,

@@ -87,8 +87,8 @@ namespace RRaM.Core.Cards
 
         public IEnumerator PlayLocalPoseAnimation(Vector3 targetLocalPosition, Quaternion targetLocalRotation, Vector3 targetLocalScale, float duration)
         {
-            CancelRootAnimation();
-            yield return AnimateRootPose(targetLocalPosition, targetLocalRotation, targetLocalScale, duration);
+            RestartRootRoutine(AnimateRootPose(targetLocalPosition, targetLocalRotation, targetLocalScale, duration));
+            yield return activeRootRoutine;
         }
 
         public IEnumerator PlayDrawAnimation(Transform target)
@@ -98,7 +98,8 @@ namespace RRaM.Core.Cards
                 yield break;
             }
 
-            yield return AnimateWorldRootPose(target.position, target.rotation, drawDuration);
+            RestartRootRoutine(AnimateWorldRootPose(target.position, target.rotation, drawDuration));
+            yield return activeRootRoutine;
         }
 
         public IEnumerator PlayUseAnimation()
@@ -223,7 +224,7 @@ namespace RRaM.Core.Cards
                 StopCoroutine(activeRootRoutine);
             }
 
-            activeRootRoutine = StartCoroutine(routine);
+            activeRootRoutine = StartCoroutine(RunRootRoutine(routine));
         }
 
         private void RestartVisualRoutine(IEnumerator routine)
@@ -233,7 +234,19 @@ namespace RRaM.Core.Cards
                 StopCoroutine(activeVisualRoutine);
             }
 
-            activeVisualRoutine = StartCoroutine(routine);
+            activeVisualRoutine = StartCoroutine(RunVisualRoutine(routine));
+        }
+
+        private IEnumerator RunRootRoutine(IEnumerator routine)
+        {
+            yield return routine;
+            activeRootRoutine = null;
+        }
+
+        private IEnumerator RunVisualRoutine(IEnumerator routine)
+        {
+            yield return routine;
+            activeVisualRoutine = null;
         }
     }
 }

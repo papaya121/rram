@@ -160,7 +160,7 @@ namespace RRaM.Core.Characters
             }
 
             bool isSetupMove = TurnManager.Instance.IsSetupPhase;
-            bool hasRequiredRoll = isSetupMove || (Dice.DiceManager.Instance != null && Dice.DiceManager.Instance.HasRolled);
+            bool hasRequiredRoll = Dice.DiceManager.Instance != null && Dice.DiceManager.Instance.HasRolled;
             if (!hasRequiredRoll || !TurnManager.Instance.CanPlayerMove(player.PlayerSlot))
             {
                 Debug.LogWarning($"[Server] Movement rejected. Cannot move. Slot={player.PlayerSlot}, Setup={isSetupMove}, HasRolled={(Dice.DiceManager.Instance != null && Dice.DiceManager.Instance.HasRolled)}, CanPlayerMove={TurnManager.Instance.CanPlayerMove(player.PlayerSlot)}, Phase={TurnManager.Instance.CurrentPhase}, RemainingMove={TurnManager.Instance.GetRemainingMoveBudget()}, RemainingDieActions={TurnManager.Instance.GetRemainingDieActions()}");

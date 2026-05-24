@@ -1,4 +1,6 @@
 using System.Collections.Generic;
+using RRaM.Core.Characters;
+using RRaM.Core.Networking;
 using UnityEngine;
 
 namespace RRaM.Core.Cards
@@ -13,12 +15,26 @@ namespace RRaM.Core.Cards
         [SerializeField] private Vector3 cardEulerAngles = new(70f, 0f, 0f);
         [SerializeField] private Vector3 cardScale = Vector3.one;
         [SerializeField] private Vector3 ownerLaneOffset = new(0f, 0f, -0.35f);
+        [SerializeField, Range(0f, 1f)] private float hiddenCharacterSlotAlpha = 0.2f;
 
         private readonly Dictionary<string, List<CardInstance>> cardsByGroup = new();
+        private CanvasGroup[] characterSlotCanvasGroups;
+        private int lastSelectedCharacterIndex = int.MinValue;
 
         private void Awake()
         {
             Instance = this;
+        }
+
+        private void OnEnable()
+        {
+            CacheCharacterSlotCanvasGroups();
+            ApplyCharacterSlotVisibility(force: true);
+        }
+
+        private void LateUpdate()
+        {
+            ApplyCharacterSlotVisibility(force: false);
         }
 
         public static HandController Resolve(bool activateIfInactive)
@@ -109,7 +125,7 @@ namespace RRaM.Core.Cards
                 return;
             }
 
-            RebuildGroupLayout(card.OwnerPlayerSlot, card.HandSlotIndex, animate: true);
+            RebuildGroupLayout(ownerPlayerSlot, characterIndex, animate: true);
         }
 
         public void RefreshCard(CardInstance card, bool animate)
@@ -175,6 +191,101 @@ namespace RRaM.Core.Cards
         private static string GetGroupKey(int ownerPlayerSlot, int characterIndex)
         {
             return $"{ownerPlayerSlot}:{characterIndex}";
+        }
+
+        private void ApplyCharacterSlotVisibility(bool force)
+        {
+            int selectedCharacterIndex = ResolveSelectedCharacterIndex();
+            if (!force && selectedCharacterIndex == lastSelectedCharacterIndex)
+            {
+                return;
+            }
+
+            CacheCharacterSlotCanvasGroups();
+            lastSelectedCharacterIndex = selectedCharacterIndex;
+
+            if (characterSlots == null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < characterSlots.Length; i++)
+            {
+                CanvasGroup canvasGroup = characterSlotCanvasGroups != null && i < characterSlotCanvasGroups.Length
+                    ? characterSlotCanvasGroups[i]
+                    : null;
+                if (canvasGroup == null)
+                {
+                    continue;
+                }
+
+                bool isVisible = selectedCharacterIndex < 0 || i == selectedCharacterIndex;
+                canvasGroup.alpha = isVisible ? 1f : hiddenCharacterSlotAlpha;
+                canvasGroup.interactable = isVisible;
+                canvasGroup.blocksRaycasts = isVisible;
+            }
+        }
+
+        private void CacheCharacterSlotCanvasGroups()
+        {
+            if (characterSlots == null)
+            {
+                characterSlotCanvasGroups = System.Array.Empty<CanvasGroup>();
+                return;
+            }
+
+            if (characterSlotCanvasGroups == null || characterSlotCanvasGroups.Length != characterSlots.Length)
+            {
+                characterSlotCanvasGroups = new CanvasGroup[characterSlots.Length];
+            }
+
+            for (int i = 0; i < characterSlots.Length; i++)
+            {
+                Transform slot = characterSlots[i];
+                if (slot == null)
+                {
+                    characterSlotCanvasGroups[i] = null;
+                    continue;
+                }
+
+                CanvasGroup canvasGroup = slot.GetComponent<CanvasGroup>();
+                if (canvasGroup == null)
+                {
+                    canvasGroup = slot.gameObject.AddComponent<CanvasGroup>();
+                }
+
+                characterSlotCanvasGroups[i] = canvasGroup;
+            }
+        }
+
+        private int ResolveSelectedCharacterIndex()
+        {
+            if (characterSlots == null || characterSlots.Length == 0)
+            {
+                return -1;
+            }
+
+            LocalPlayerController local = LocalPlayerController.Instance;
+            if (local == null || local.Player == null)
+            {
+                return -1;
+            }
+
+            uint selectedCharacterNetId = local.EffectiveSelectedCharacterNetId;
+            if (selectedCharacterNetId == 0)
+            {
+                return -1;
+            }
+
+            CharacterSnapshot selectedCharacter = local.ResolveOwnedCharacterSnapshot(selectedCharacterNetId);
+            if (selectedCharacter.NetId == 0 && local.PredictedSelectedCharacter.NetId == selectedCharacterNetId)
+            {
+                selectedCharacter = local.PredictedSelectedCharacter;
+            }
+
+            return selectedCharacter.NetId != 0
+                ? Mathf.Clamp((int)selectedCharacter.CharacterType, 0, characterSlots.Length - 1)
+                : -1;
         }
 
         private void OnDestroy()

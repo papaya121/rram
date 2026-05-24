@@ -19,5 +19,5 @@ MonoBehaviour:
   handSlotMode: 1
   fixedHandCharacter: 4
   displayName: "\u041a\u043e\u0432\u0435\u0440 \u0448\u0430\u043c\u0430\u043d\u0430"
-  implementationStatus: 0
+  implementationStatus: 2
   futureHook: ""
