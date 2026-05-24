@@ -231,7 +231,12 @@ namespace RRaM.Core.Cards
                 return false;
             }
 
-            cardInstance.Data.Use(context);
+            if (!cardInstance.Data.Use(context))
+            {
+                Debug.LogWarning($"[Cards] Use failed during effect resolution. Card={cardInstance.Data.CardId}, Slot={player.PlayerSlot}, Character={context.character.DisplayName}");
+                return false;
+            }
+
             if (cardInstance.Data.isConsumable)
             {
                 cardInstance.ServerMarkPendingConsume();

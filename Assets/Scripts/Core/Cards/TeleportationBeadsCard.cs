@@ -17,14 +17,15 @@ namespace RRaM.Core.Cards
                    context.turnManager.CanPlayerSpendDieActionWithMinimum(context.player.PlayerSlot, MinimumDieValue);
         }
 
-        public override void Use(CardContext context)
+        public override bool Use(CardContext context)
         {
             if (context?.character == null || context.character.IsDead)
             {
-                return;
+                return false;
             }
 
             context.character.ServerTeleportToSpawn();
+            return true;
         }
     }
 }

@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using System.Linq;
+using RRaM.Core.Cards;
 using RRaM.Core.Characters;
 using RRaM.Core.Dice;
 using RRaM.Core.Networking;
@@ -166,7 +167,7 @@ namespace RRaM.Core.Board
             Vector2 mousePosition = mouse.position.ReadValue();
             if (Screen.width > 0 && mousePosition.x <= HudSafeWidth)
             {
-                UpdateHoverDebugState($"Cursor over HUD. MouseX={mousePosition.x:0.##}, SafeWidth={HudSafeWidth}");
+                // UpdateHoverDebugState($"Cursor over HUD. MouseX={mousePosition.x:0.##}, SafeWidth={HudSafeWidth}");
                 ClearHoveredTarget();
                 return;
             }
@@ -179,13 +180,20 @@ namespace RRaM.Core.Board
                 return;
             }
 
+            if (CardInteraction.IsPointerOverSelectableCard(mousePosition))
+            {
+                // UpdateHoverDebugState($"Cursor over card. Mouse={mousePosition}");
+                ClearHoveredTarget();
+                return;
+            }
+
             Ray ray = cameraToUse.ScreenPointToRay(mousePosition);
             if (!TryResolveHoveredTarget(ray, out BoardNodeHoverTarget target, out string raycastSummary))
             {
                 if (mouse.leftButton.wasPressedThisFrame || Time.unscaledTime >= nextMissingTargetLogTime)
                 {
                     nextMissingTargetLogTime = Time.unscaledTime + 1f;
-                    UpdateHoverDebugState($"No hover target under cursor. Mouse={mousePosition}, Raycast={raycastSummary}");
+                    // UpdateHoverDebugState($"No hover target under cursor. Mouse={mousePosition}, Raycast={raycastSummary}");
                 }
 
                 ClearHoveredTarget();
@@ -696,7 +704,7 @@ namespace RRaM.Core.Board
             }
 
             lastHoverDebugState = state;
-            LogDebug(state);
+            // LogDebug(state);
         }
 
         private void UpdateMovementDebugState(string state)

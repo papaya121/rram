@@ -971,12 +971,26 @@ namespace RRaM.Core.UI
                 return false;
             }
 
+            if (TryResolveLocalCardInstance(card.NetId, out CardInstance cardInstance))
+            {
+                return cardInstance.CanUseFromLocalClient();
+            }
+
             return card.NetId != 0 &&
                    card.IsPlayable &&
                    !card.RequiresTransferBeforeUse &&
                    TurnManager.Instance.CanPlayerSelectCharacter(local.Player.PlayerSlot, card.AssignedCharacterNetId) &&
                    TurnManager.Instance.CanPlayerSpendDieActionWithMinimum(local.Player.PlayerSlot, card.MinimumDieValue) &&
                    HasLocalCardRequirements(local.Player, card);
+        }
+
+        private static bool TryResolveLocalCardInstance(uint cardNetId, out CardInstance cardInstance)
+        {
+            cardInstance = null;
+            return cardNetId != 0 &&
+                   NetworkClient.spawned.TryGetValue(cardNetId, out NetworkIdentity identity) &&
+                   identity != null &&
+                   identity.TryGetComponent(out cardInstance);
         }
 
         private static bool HasLocalCardRequirements(NetworkPlayerConnection player, CardSnapshot card)

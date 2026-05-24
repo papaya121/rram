@@ -10,14 +10,15 @@ namespace RRaM.Core.Cards
             return context?.player != null;
         }
 
-        public override void Use(CardContext context)
+        public override bool Use(CardContext context)
         {
             if (!CanUse(context))
             {
-                return;
+                return false;
             }
 
             context.player.ServerForceEndTurn();
+            return true;
         }
     }
 }

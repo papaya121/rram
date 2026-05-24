@@ -39,7 +39,7 @@ namespace RRaM.Core.Cards
         }
 
         public abstract bool CanUse(CardContext context);
-        public abstract void Use(CardContext context);
+        public abstract bool Use(CardContext context);
 
         private static string ResolveDisplayName(string rawName, string fallback)
         {

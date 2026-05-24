@@ -1,5 +1,6 @@
 using System.Collections.Generic;
 using RRaM.Core.Characters;
+using RRaM.Core.Match;
 using RRaM.Core.Networking;
 using UnityEngine;
 
@@ -29,11 +30,21 @@ namespace RRaM.Core.Cards
         private void OnEnable()
         {
             CacheCharacterSlotCanvasGroups();
+            if (!ApplyCardsBankActiveState())
+            {
+                return;
+            }
+
             ApplyCharacterSlotVisibility(force: true);
         }
 
         private void LateUpdate()
         {
+            if (!ApplyCardsBankActiveState())
+            {
+                return;
+            }
+
             ApplyCharacterSlotVisibility(force: false);
         }
 
@@ -41,6 +52,16 @@ namespace RRaM.Core.Cards
         {
             if (Instance != null)
             {
+                if (!ShouldShowCardsBank())
+                {
+                    if (Instance.gameObject.activeSelf)
+                    {
+                        Instance.gameObject.SetActive(false);
+                    }
+
+                    return null;
+                }
+
                 if (activateIfInactive && !Instance.gameObject.activeSelf)
                 {
                     Instance.gameObject.SetActive(true);
@@ -60,6 +81,16 @@ namespace RRaM.Core.Cards
                     continue;
                 }
 
+                if (!ShouldShowCardsBank())
+                {
+                    if (controller.gameObject.activeSelf)
+                    {
+                        controller.gameObject.SetActive(false);
+                    }
+
+                    return null;
+                }
+
                 if (activateIfInactive && !controller.gameObject.activeSelf)
                 {
                     controller.gameObject.SetActive(true);
@@ -70,6 +101,24 @@ namespace RRaM.Core.Cards
             }
 
             return null;
+        }
+
+        public static bool ShouldShowCardsBank()
+        {
+            if (!Application.isPlaying)
+            {
+                return false;
+            }
+
+            MatchManager matchManager = MatchManager.Instance;
+            if (matchManager == null)
+            {
+                return false;
+            }
+
+            return matchManager.State == MatchState.Starting ||
+                   matchManager.State == MatchState.PlayerTurn ||
+                   matchManager.State == MatchState.ResolvingDwarfs;
         }
 
         public void AddCard(CardInstance card, int characterIndex, bool animate = true)
@@ -191,6 +240,17 @@ namespace RRaM.Core.Cards
         private static string GetGroupKey(int ownerPlayerSlot, int characterIndex)
         {
             return $"{ownerPlayerSlot}:{characterIndex}";
+        }
+
+        private bool ApplyCardsBankActiveState()
+        {
+            bool shouldShow = ShouldShowCardsBank();
+            if (gameObject.activeSelf != shouldShow)
+            {
+                gameObject.SetActive(shouldShow);
+            }
+
+            return shouldShow;
         }
 
         private void ApplyCharacterSlotVisibility(bool force)

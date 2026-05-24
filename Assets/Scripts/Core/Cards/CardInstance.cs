@@ -156,6 +156,16 @@ namespace RRaM.Core.Cards
             CmdDiscardCard();
         }
 
+        public void TryTransferToLocalCharacter(uint targetCharacterNetId)
+        {
+            if (!CanTransferToLocalCharacter(targetCharacterNetId))
+            {
+                return;
+            }
+
+            LocalPlayerController.Instance?.TransferCard(netId, targetCharacterNetId);
+        }
+
         public bool CanSelectFromLocalClient()
         {
             return isClient &&
@@ -168,6 +178,39 @@ namespace RRaM.Core.Cards
         public bool CanDiscardFromLocalClient()
         {
             return CanSelectFromLocalClient();
+        }
+
+        public bool CanTransferFromLocalClient()
+        {
+            if (!CanSelectFromLocalClient())
+            {
+                return false;
+            }
+
+            LocalPlayerController local = LocalPlayerController.Instance;
+            if (local == null || local.Player == null || TurnManager.Instance == null)
+            {
+                return false;
+            }
+
+            uint sourceCharacterNetId = ResolveLocalActionCharacterNetId(local);
+            return sourceCharacterNetId != 0 &&
+                   assignedCharacterNetId == sourceCharacterNetId &&
+                   TurnManager.Instance.CanPlayerTransferCard(local.Player.PlayerSlot);
+        }
+
+        public bool CanTransferToLocalCharacter(uint targetCharacterNetId)
+        {
+            if (!CanTransferFromLocalClient() || targetCharacterNetId == 0 || targetCharacterNetId == assignedCharacterNetId)
+            {
+                return false;
+            }
+
+            LocalPlayerController local = LocalPlayerController.Instance;
+            CharacterSnapshot target = local != null
+                ? local.ResolveOwnedCharacterSnapshot(targetCharacterNetId)
+                : default;
+            return target.NetId == targetCharacterNetId && !target.IsDead;
         }
 
         public bool CanUseFromLocalClient()
@@ -448,6 +491,18 @@ namespace RRaM.Core.Cards
             }
 
             return identity.GetComponent<NetworkCharacterPawn>();
+        }
+
+        private static uint ResolveLocalActionCharacterNetId(LocalPlayerController local)
+        {
+            if (local == null || TurnManager.Instance == null)
+            {
+                return 0;
+            }
+
+            return TurnManager.Instance.ActiveCharacterNetId != 0
+                ? TurnManager.Instance.ActiveCharacterNetId
+                : local.EffectiveSelectedCharacterNetId;
         }
 
         private void OnCardIdChanged(string _, string __)
