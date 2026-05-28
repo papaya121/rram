@@ -102,7 +102,7 @@ namespace RRaM.Core.Cards
 
             if (!TurnManager.Instance.ServerTryUseCharacterForCurrentTurn(player.PlayerSlot, actingCharacter.netId))
             {
-                Debug.LogWarning($"[Cards] Draw rejected. Turn is locked to another character. Slot={player.PlayerSlot}, CharacterNetId={actingCharacter.netId}, ActiveCharacterNetId={TurnManager.Instance.ActiveCharacterNetId}");
+                Debug.LogWarning($"[Cards] Draw rejected. Turn is locked to another character. Slot={player.PlayerSlot}, CharacterNetId={actingCharacter.netId}, ActiveCharacterNetId={TurnManager.Instance.GetActiveCharacterNetId(player.PlayerSlot)}");
                 return false;
             }
 
@@ -308,14 +308,15 @@ namespace RRaM.Core.Cards
                 return false;
             }
 
-            if (TurnManager.Instance.ActiveCharacterNetId == 0)
+            uint activeCharacterNetId = TurnManager.Instance.GetActiveCharacterNetId(player.PlayerSlot);
+            if (activeCharacterNetId == 0)
             {
                 if (!TurnManager.Instance.ServerTryUseCharacterForCurrentTurn(player.PlayerSlot, sourceCharacter.netId))
                 {
                     return false;
                 }
             }
-            else if (TurnManager.Instance.ActiveCharacterNetId != sourceCharacter.netId)
+            else if (activeCharacterNetId != sourceCharacter.netId)
             {
                 return false;
             }
@@ -1122,8 +1123,9 @@ namespace RRaM.Core.Cards
                 return false;
             }
 
-            uint characterNetId = TurnManager.Instance.ActiveCharacterNetId != 0
-                ? TurnManager.Instance.ActiveCharacterNetId
+            uint activeCharacterNetId = TurnManager.Instance.GetActiveCharacterNetId(player.PlayerSlot);
+            uint characterNetId = activeCharacterNetId != 0
+                ? activeCharacterNetId
                 : player.SelectedCharacterNetId;
             if (!CharacterManager.Instance.TryGetServerCharacter(characterNetId, out character))
             {

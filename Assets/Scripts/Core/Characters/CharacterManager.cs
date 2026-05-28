@@ -160,10 +160,10 @@ namespace RRaM.Core.Characters
             }
 
             bool isSetupMove = TurnManager.Instance.IsSetupPhase;
-            bool hasRequiredRoll = Dice.DiceManager.Instance != null && Dice.DiceManager.Instance.HasRolled;
+            bool hasRequiredRoll = Dice.DiceManager.Instance != null && Dice.DiceManager.Instance.HasRolledThisTurn(player.PlayerSlot);
             if (!hasRequiredRoll || !TurnManager.Instance.CanPlayerMove(player.PlayerSlot))
             {
-                Debug.LogWarning($"[Server] Movement rejected. Cannot move. Slot={player.PlayerSlot}, Setup={isSetupMove}, HasRolled={(Dice.DiceManager.Instance != null && Dice.DiceManager.Instance.HasRolled)}, CanPlayerMove={TurnManager.Instance.CanPlayerMove(player.PlayerSlot)}, Phase={TurnManager.Instance.CurrentPhase}, RemainingMove={TurnManager.Instance.GetRemainingMoveBudget()}, RemainingDieActions={TurnManager.Instance.GetRemainingDieActions()}");
+                Debug.LogWarning($"[Server] Movement rejected. Cannot move. Slot={player.PlayerSlot}, Setup={isSetupMove}, HasRolled={(Dice.DiceManager.Instance != null && Dice.DiceManager.Instance.HasRolledThisTurn(player.PlayerSlot))}, CanPlayerMove={TurnManager.Instance.CanPlayerMove(player.PlayerSlot)}, Phase={TurnManager.Instance.GetCurrentPhase(player.PlayerSlot)}, RemainingMove={TurnManager.Instance.GetRemainingMoveBudget(player.PlayerSlot)}, RemainingDieActions={TurnManager.Instance.GetRemainingDieActions(player.PlayerSlot)}");
                 return false;
             }
 
@@ -197,7 +197,7 @@ namespace RRaM.Core.Characters
 
             if (!TurnManager.Instance.ServerTryUseCharacterForCurrentTurn(player.PlayerSlot, pawn.netId))
             {
-                Debug.LogWarning($"[Server] Movement rejected. Turn is locked to another character. Slot={player.PlayerSlot}, CharacterNetId={pawn.netId}, ActiveCharacterNetId={TurnManager.Instance.ActiveCharacterNetId}");
+                Debug.LogWarning($"[Server] Movement rejected. Turn is locked to another character. Slot={player.PlayerSlot}, CharacterNetId={pawn.netId}, ActiveCharacterNetId={TurnManager.Instance.GetActiveCharacterNetId(player.PlayerSlot)}");
                 return false;
             }
 
@@ -211,7 +211,7 @@ namespace RRaM.Core.Characters
             int usedSteps = Mathf.Max(0, path.Count - 1);
             if (!TurnManager.Instance.ServerConsumeMovement(player.PlayerSlot, usedSteps))
             {
-                Debug.LogWarning($"[Server] Movement rejected. Failed to consume movement. Slot={player.PlayerSlot}, CharacterNetId={pawn.netId}, UsedSteps={usedSteps}, PrimaryBudget={TurnManager.Instance.GetPrimaryMoveBudget()}, RemainingMove={TurnManager.Instance.GetRemainingMoveBudget()}, RemainingDieActions={TurnManager.Instance.GetRemainingDieActions()}");
+                Debug.LogWarning($"[Server] Movement rejected. Failed to consume movement. Slot={player.PlayerSlot}, CharacterNetId={pawn.netId}, UsedSteps={usedSteps}, PrimaryBudget={TurnManager.Instance.GetPrimaryMoveBudget(player.PlayerSlot)}, RemainingMove={TurnManager.Instance.GetRemainingMoveBudget(player.PlayerSlot)}, RemainingDieActions={TurnManager.Instance.GetRemainingDieActions(player.PlayerSlot)}");
                 return false;
             }
 

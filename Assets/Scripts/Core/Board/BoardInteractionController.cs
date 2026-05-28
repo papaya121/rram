@@ -322,13 +322,13 @@ namespace RRaM.Core.Board
             bool isSetupMove = turnManager.IsSetupPhase;
             bool movementPhaseReady =
                 turnManager.CanPlayerMove(localSlot) &&
-                diceManager.HasRolled &&
-                turnManager.CurrentPhase == TurnPhase.WaitingForMove &&
+                diceManager.HasRolledThisTurn(localSlot) &&
+                turnManager.GetCurrentPhase(localSlot) == TurnPhase.WaitingForMove &&
                 turnManager.GetRemainingMoveBudget(localSlot) > 0;
             if (!movementPhaseReady)
             {
                 movementState =
-                    $"Movement blocked. LocalSlot={localSlot}, Setup={isSetupMove}, HasRolled={diceManager.HasRolled}, CanPlayerMove={turnManager.CanPlayerMove(localSlot)}, RemainingBudget={turnManager.GetRemainingMoveBudget(localSlot)}, RemainingDieActions={turnManager.GetRemainingDieActions()}, Phase={turnManager.CurrentPhase}";
+                    $"Movement blocked. LocalSlot={localSlot}, Setup={isSetupMove}, HasRolled={diceManager.HasRolledThisTurn(localSlot)}, CanPlayerMove={turnManager.CanPlayerMove(localSlot)}, RemainingBudget={turnManager.GetRemainingMoveBudget(localSlot)}, RemainingDieActions={turnManager.GetRemainingDieActions(localSlot)}, Phase={turnManager.GetCurrentPhase(localSlot)}";
                 return false;
             }
 
@@ -350,7 +350,7 @@ namespace RRaM.Core.Board
             if (!turnManager.CanPlayerSelectCharacter(localSlot, selectedCharacter.NetId))
             {
                 movementState =
-                    $"Movement blocked. Selected character '{selectedCharacter.DisplayName}' is not available for the active action. ActiveCharacterNetId={turnManager.ActiveCharacterNetId}, SelectedCharacterNetId={selectedCharacter.NetId}, Phase={turnManager.CurrentPhase}";
+                    $"Movement blocked. Selected character '{selectedCharacter.DisplayName}' is not available for the active action. ActiveCharacterNetId={turnManager.GetActiveCharacterNetId(localSlot)}, SelectedCharacterNetId={selectedCharacter.NetId}, Phase={turnManager.GetCurrentPhase(localSlot)}";
                 return false;
             }
 
@@ -365,7 +365,7 @@ namespace RRaM.Core.Board
                 turnManager.GetPrimaryMoveBudget(localSlot),
                 turnManager.GetRemainingMoveBudget(localSlot));
             movementState =
-                $"Movement ready. SelectedCharacter='{selectedCharacter.DisplayName}', Node='{selectedCharacter.CurrentNodeId}', Source={selectedCharacterSource}, PrimaryBudget={movementBudget.Primary}, TotalBudget={movementBudget.Total}, CanPlayerMove={turnManager.CanPlayerMove(localSlot)}, Phase={turnManager.CurrentPhase}";
+                $"Movement ready. SelectedCharacter='{selectedCharacter.DisplayName}', Node='{selectedCharacter.CurrentNodeId}', Source={selectedCharacterSource}, PrimaryBudget={movementBudget.Primary}, TotalBudget={movementBudget.Total}, CanPlayerMove={turnManager.CanPlayerMove(localSlot)}, Phase={turnManager.GetCurrentPhase(localSlot)}";
             return true;
         }
 

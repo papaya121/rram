@@ -500,8 +500,10 @@ namespace RRaM.Core.Cards
                 return 0;
             }
 
-            return TurnManager.Instance.ActiveCharacterNetId != 0
-                ? TurnManager.Instance.ActiveCharacterNetId
+            int playerSlot = local.Player != null ? local.Player.PlayerSlot : -1;
+            uint activeCharacterNetId = TurnManager.Instance.GetActiveCharacterNetId(playerSlot);
+            return activeCharacterNetId != 0
+                ? activeCharacterNetId
                 : local.EffectiveSelectedCharacterNetId;
         }
 
