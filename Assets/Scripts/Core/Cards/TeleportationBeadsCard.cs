@@ -1,4 +1,5 @@
 using UnityEngine;
+using RRaM.Core.Characters;
 
 namespace RRaM.Core.Cards
 {
@@ -14,7 +15,8 @@ namespace RRaM.Core.Cards
                    context.diceSystem != null &&
                    context.diceSystem.HasRolledThisTurn(context.player.PlayerSlot) &&
                    context.turnManager != null &&
-                   context.turnManager.CanPlayerSpendDieActionWithMinimum(context.player.PlayerSlot, MinimumDieValue);
+                   context.turnManager.CanPlayerSpendDieActionWithMinimum(context.player.PlayerSlot, MinimumDieValue) &&
+                   HasTeleportDestination(context);
         }
 
         public override bool Use(CardContext context)
@@ -25,7 +27,15 @@ namespace RRaM.Core.Cards
             }
 
             context.character.ServerTeleportToSpawn();
+            CharacterManager.Instance?.ServerSyncPlayerCharacters(context.player);
             return true;
+        }
+
+        private static bool HasTeleportDestination(CardContext context)
+        {
+            return context?.character != null &&
+                   !string.IsNullOrWhiteSpace(context.character.SpawnNodeId) &&
+                   context.character.CurrentNodeId != context.character.SpawnNodeId;
         }
     }
 }

@@ -343,6 +343,11 @@ namespace RRaM.Core.Turns
                    HasAvailableDieAtLeast(playerSlot, LoadActionState(playerSlot), Mathf.Max(1, minimumDieValue));
         }
 
+        public int GetLastConsumedDieValue(int playerSlot)
+        {
+            return Mathf.Max(0, LoadActionState(playerSlot).LastConsumedDieValue);
+        }
+
         /// <summary>
         /// Consumes one or more die actions for card draw/use style actions.
         /// </summary>

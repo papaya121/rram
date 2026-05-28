@@ -141,39 +141,68 @@ namespace RRaM.Core.Cards
             }
 
             CardManager cards = context.cardManager;
-            int dieBonus = Mathf.Max(0, context.turnManager != null ? context.turnManager.LastConsumedDieValue : 0);
+            int dieBonus = Mathf.Max(0, context.turnManager != null ? context.turnManager.GetLastConsumedDieValue(context.player.PlayerSlot) : 0);
             uint currentCardNetId = context.cardInstance != null ? context.cardInstance.netId : 0;
             switch (CardId)
             {
                 case "BagCard":
-                    if (cards.ServerTryConsumeCardsPreferCharacter(context.player, context.character.netId, "DirtyMixedIronOreCard", "DirtyMixedIronOreCard", "DirtyMixedIronOreCard"))
+                    if (cards.ServerTryConsumeCardsAndGrantCard(
+                            context.player,
+                            context.character.netId,
+                            context.character,
+                            "MediumQualityIronOreCard",
+                            0,
+                            "DirtyMixedIronOreCard",
+                            "DirtyMixedIronOreCard",
+                            "DirtyMixedIronOreCard"))
                     {
-                        return cards.ServerTryGrantCard(context.player, context.character, "MediumQualityIronOreCard");
+                        return true;
                     }
 
-                    return cards.ServerTryConsumeCardsPreferCharacter(context.player, context.character.netId, "GoldNuggetCard") &&
-                           cards.ServerTryGrantCard(context.player, context.character, "MediumQualityIronOreCard");
+                    return cards.ServerTryConsumeCardsAndGrantCard(
+                        context.player,
+                        context.character.netId,
+                        context.character,
+                        "MediumQualityIronOreCard",
+                        0,
+                        "GoldNuggetCard");
                 case "BagRecipeCard":
-                    if (cards.ServerTryConsumeCardsPreferCharacter(context.player, context.character.netId, "CleanedRamHideCard", "RamWoolThreadBallCard"))
-                    {
-                        return cards.ServerTryGrantCardToCharacterType(context.player, CharacterType.BlacksmithAssistant, "BagCard", currentCardNetId);
-                    }
-
-                    return false;
+                    return cards.ServerTryConsumeCardsAndGrantCardToCharacterType(
+                        context.player,
+                        context.character.netId,
+                        CharacterType.BlacksmithAssistant,
+                        "BagCard",
+                        currentCardNetId,
+                        "CleanedRamHideCard",
+                        "RamWoolThreadBallCard");
                 case "BowCard":
                     return cards.ServerTryDamageNearestEnemy(context.player, context.character, 2, 3, 5 + dieBonus);
                 case "BowRecipeCard":
-                    if (cards.ServerTryConsumeCardsPreferCharacter(context.player, context.character.netId, "FlexibleStickCard", "RamWoolThreadBallCard"))
-                    {
-                        return cards.ServerTryGrantCardToCharacterType(context.player, CharacterType.Hunter, "BowCard", currentCardNetId);
-                    }
-
-                    return false;
+                    return cards.ServerTryConsumeCardsAndGrantCardToCharacterType(
+                        context.player,
+                        context.character.netId,
+                        CharacterType.Hunter,
+                        "BowCard",
+                        currentCardNetId,
+                        "FlexibleStickCard",
+                        "RamWoolThreadBallCard");
                 case "ClubBlueprintCard":
-                    if (cards.ServerTryConsumeCardsPreferCharacter(context.player, context.character.netId, "BearHideCard") ||
-                        cards.ServerTryConsumeCardsPreferCharacter(context.player, context.character.netId, "RamHideCard"))
+                    if (cards.ServerTryConsumeCardsAndGrantCardToCharacterType(
+                            context.player,
+                            context.character.netId,
+                            CharacterType.Warrior,
+                            "ClubCard",
+                            currentCardNetId,
+                            "BearHideCard") ||
+                        cards.ServerTryConsumeCardsAndGrantCardToCharacterType(
+                            context.player,
+                            context.character.netId,
+                            CharacterType.Warrior,
+                            "ClubCard",
+                            currentCardNetId,
+                            "RamHideCard"))
                     {
-                        return cards.ServerTryGrantCardToCharacterType(context.player, CharacterType.Warrior, "ClubCard", currentCardNetId);
+                        return true;
                     }
 
                     return false;
@@ -184,16 +213,17 @@ namespace RRaM.Core.Cards
                 case "GoldNuggetCard":
                     return cards.ServerTryGrantCard(context.player, context.character, "MediumQualityIronOreCard", currentCardNetId);
                 case "HammerBlueprintCard":
-                    if (cards.ServerTryConsumeCardsPreferCharacter(context.player, context.character.netId, "MixedIronOreCard"))
-                    {
-                        return cards.ServerTryGrantCardToCharacterType(context.player, CharacterType.Blacksmith, "HammerCard", currentCardNetId);
-                    }
-
-                    return false;
+                    return cards.ServerTryConsumeCardsAndGrantCardToCharacterType(
+                        context.player,
+                        context.character.netId,
+                        CharacterType.Blacksmith,
+                        "HammerCard",
+                        currentCardNetId,
+                        "MixedIronOreCard");
                 case "RamCard":
-                    if (cards.ServerTryDamageOwnedCharacter(context.player, context.character, 1))
+                    if (cards.ServerTryGrantCard(context.player, context.character, "RamHideCard", currentCardNetId))
                     {
-                        return cards.ServerTryGrantCard(context.player, context.character, "RamHideCard", currentCardNetId);
+                        return cards.ServerTryDamageOwnedCharacter(context.player, context.character, 1);
                     }
 
                     return false;
@@ -202,12 +232,14 @@ namespace RRaM.Core.Cards
                 case "ShamanCarpetCard":
                     return cards.ServerTryHealCharacter(context.player, context.character, 2);
                 case "ShamanCarpetRecipeCard":
-                    if (cards.ServerTryConsumeCardsPreferCharacter(context.player, context.character.netId, "BearHideCard", "RamHideThreadCard"))
-                    {
-                        return cards.ServerTryGrantCardToCharacterType(context.player, CharacterType.Shaman, "ShamanCarpetCard", currentCardNetId);
-                    }
-
-                    return false;
+                    return cards.ServerTryConsumeCardsAndGrantCardToCharacterType(
+                        context.player,
+                        context.character.netId,
+                        CharacterType.Shaman,
+                        "ShamanCarpetCard",
+                        currentCardNetId,
+                        "BearHideCard",
+                        "RamHideThreadCard");
                 case "SheepWoolCard":
                     return cards.ServerTryGrantCard(context.player, context.character, "RamWoolThreadBallCard", currentCardNetId);
             }

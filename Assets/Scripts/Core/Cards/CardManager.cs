@@ -607,6 +607,65 @@ namespace RRaM.Core.Cards
         }
 
         [Server]
+        public bool ServerTryConsumeCardsAndGrantCard(
+            NetworkPlayerConnection player,
+            uint preferredCharacterNetId,
+            NetworkCharacterPawn grantCharacter,
+            string grantedCardId,
+            uint ignoredCardNetId,
+            params string[] consumedCardIds)
+        {
+            if (player == null ||
+                grantCharacter == null ||
+                string.IsNullOrWhiteSpace(grantedCardId) ||
+                consumedCardIds == null ||
+                !TryResolveCardData(grantedCardId, out BaseCard grantedCardData))
+            {
+                return false;
+            }
+
+            if (!TryCollectOwnedCards(player, preferredCharacterNetId, consumedCardIds, out List<CardInstance> cardsToConsume))
+            {
+                return false;
+            }
+
+            if (!CanGrantCardAfterConsumingSelected(player, grantCharacter, grantedCardData, ignoredCardNetId, cardsToConsume))
+            {
+                return false;
+            }
+
+            for (int i = 0; i < cardsToConsume.Count; i++)
+            {
+                ServerRemoveCard(player, cardsToConsume[i], returnToDeck: true);
+            }
+
+            int handSlotIndex = Mathf.Clamp((int)grantCharacter.CharacterType, 0, HandSlotCount - 1);
+            ServerSpawnOwnedCard(player, grantedCardData, grantCharacter, handSlotIndex);
+            SyncPlayerCards(player);
+            return true;
+        }
+
+        [Server]
+        public bool ServerTryConsumeCardsAndGrantCardToCharacterType(
+            NetworkPlayerConnection player,
+            uint preferredCharacterNetId,
+            CharacterType grantCharacterType,
+            string grantedCardId,
+            uint ignoredCardNetId,
+            params string[] consumedCardIds)
+        {
+            return CharacterManager.Instance != null &&
+                   CharacterManager.Instance.TryGetServerCharacter(player, grantCharacterType, out NetworkCharacterPawn grantCharacter) &&
+                   ServerTryConsumeCardsAndGrantCard(
+                       player,
+                       preferredCharacterNetId,
+                       grantCharacter,
+                       grantedCardId,
+                       ignoredCardNetId,
+                       consumedCardIds);
+        }
+
+        [Server]
         public bool ServerHasCards(NetworkPlayerConnection player, params string[] cardIds)
         {
             if (player == null || cardIds == null)
@@ -828,6 +887,73 @@ namespace RRaM.Core.Cards
 
             card.ServerMarkPendingConsume();
             NetworkServer.Destroy(card.gameObject);
+        }
+
+        [Server]
+        private bool TryCollectOwnedCards(
+            NetworkPlayerConnection player,
+            uint preferredCharacterNetId,
+            IReadOnlyList<string> cardIds,
+            out List<CardInstance> cardsToConsume)
+        {
+            cardsToConsume = null;
+            if (player == null || cardIds == null)
+            {
+                return false;
+            }
+
+            List<CardInstance> collected = new(cardIds.Count);
+            for (int i = 0; i < cardIds.Count; i++)
+            {
+                if (string.IsNullOrWhiteSpace(cardIds[i]) ||
+                    (!TryFindOwnedCard(player, cardIds[i], preferredCharacterNetId, collected, out CardInstance card) &&
+                     !TryFindOwnedCard(player, cardIds[i], 0, collected, out card)))
+                {
+                    return false;
+                }
+
+                collected.Add(card);
+            }
+
+            cardsToConsume = collected;
+            return true;
+        }
+
+        [Server]
+        private bool CanGrantCardAfterConsumingSelected(
+            NetworkPlayerConnection player,
+            NetworkCharacterPawn character,
+            BaseCard grantedCardData,
+            uint ignoredCardNetId,
+            IReadOnlyList<CardInstance> cardsToConsume)
+        {
+            if (player == null ||
+                character == null ||
+                grantedCardData == null ||
+                character.OwnerSlot != player.PlayerSlot ||
+                character.IsDead)
+            {
+                return false;
+            }
+
+            int freedSlots = 0;
+            if (cardsToConsume != null)
+            {
+                for (int i = 0; i < cardsToConsume.Count; i++)
+                {
+                    CardInstance card = cardsToConsume[i];
+                    if (card != null &&
+                        !card.IsPendingConsume &&
+                        card.netId != ignoredCardNetId &&
+                        card.AssignedCharacterNetId == character.netId)
+                    {
+                        freedSlots++;
+                    }
+                }
+            }
+
+            int cardsAfterConsume = CountOwnedCards(player, character.netId, ignoredCardNetId) - freedSlots;
+            return cardsAfterConsume + 1 <= GetCharacterCardCapacity(player, character);
         }
 
         [Server]

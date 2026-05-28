@@ -974,12 +974,17 @@ namespace RRaM.Core.UI
                 return cardInstance.CanUseFromLocalClient();
             }
 
+            if (!TryBuildLocalCardContext(local.Player, card, out BaseCard cardData, out CardContext context))
+            {
+                return false;
+            }
+
             return card.NetId != 0 &&
-                   card.IsPlayable &&
+                   cardData.IsPlayable &&
                    !card.RequiresTransferBeforeUse &&
                    TurnManager.Instance.CanPlayerSelectCharacter(local.Player.PlayerSlot, card.AssignedCharacterNetId) &&
-                   TurnManager.Instance.CanPlayerSpendDieActionWithMinimum(local.Player.PlayerSlot, card.MinimumDieValue) &&
-                   HasLocalCardRequirements(local.Player, card);
+                   TurnManager.Instance.CanPlayerSpendDieActionWithMinimum(local.Player.PlayerSlot, cardData.MinimumDieValue) &&
+                   cardData.CanUse(context);
         }
 
         private static bool TryResolveLocalCardInstance(uint cardNetId, out CardInstance cardInstance)
@@ -991,52 +996,44 @@ namespace RRaM.Core.UI
                    identity.TryGetComponent(out cardInstance);
         }
 
-        private static bool HasLocalCardRequirements(NetworkPlayerConnection player, CardSnapshot card)
+        private static bool TryBuildLocalCardContext(
+            NetworkPlayerConnection player,
+            CardSnapshot card,
+            out BaseCard cardData,
+            out CardContext context)
         {
-            if (player == null)
+            cardData = null;
+            context = null;
+            if (player == null || string.IsNullOrWhiteSpace(card.CardId) || card.AssignedCharacterNetId == 0)
             {
                 return false;
             }
 
-            return card.CardId switch
+            Deck deck = Deck.Instance != null ? Deck.Instance : UnityEngine.Object.FindAnyObjectByType<Deck>();
+            if (deck == null || !deck.TryResolveCard(card.CardId, out cardData))
             {
-                "BagCard" => CountLocalCards(player, "DirtyMixedIronOreCard") >= 3 ||
-                             CountLocalCards(player, "GoldNuggetCard") >= 1,
-                "BagRecipeCard" => CountLocalCards(player, "HammerCard") >= 1 &&
-                                   CountLocalCards(player, "CleanedRamHideCard") >= 1 &&
-                                   CountLocalCards(player, "RamWoolThreadBallCard") >= 1 &&
-                                   CountLocalCards(player, "ShamanCarpetCard") >= 1,
-                "BowRecipeCard" => CountLocalCards(player, "HammerCard") >= 1 &&
-                                   CountLocalCards(player, "FlexibleStickCard") >= 1 &&
-                                   CountLocalCards(player, "RamWoolThreadBallCard") >= 1,
-                "ClubBlueprintCard" => CountLocalCards(player, "HammerCard") >= 1 &&
-                                       (CountLocalCards(player, "BearHideCard") >= 1 ||
-                                        CountLocalCards(player, "RamHideCard") >= 1),
-                "HammerBlueprintCard" => CountLocalCards(player, "MixedIronOreCard") >= 1,
-                "ShamanCarpetRecipeCard" => CountLocalCards(player, "BearHideCard") >= 1 &&
-                                            CountLocalCards(player, "RamHideThreadCard") >= 1,
-                _ => true
+                return false;
+            }
+
+            if (!NetworkClient.spawned.TryGetValue(card.AssignedCharacterNetId, out NetworkIdentity identity) ||
+                identity == null ||
+                !identity.TryGetComponent(out NetworkCharacterPawn character))
+            {
+                return false;
+            }
+
+            context = new CardContext
+            {
+                player = player,
+                character = character,
+                diceSystem = DiceManager.Instance,
+                board = BoardGraph.Instance,
+                owner = player.netIdentity,
+                turnManager = TurnManager.Instance,
+                cardManager = CardManager.Instance
             };
-        }
 
-        private static int CountLocalCards(NetworkPlayerConnection player, string cardId)
-        {
-            if (player == null || string.IsNullOrWhiteSpace(cardId))
-            {
-                return 0;
-            }
-
-            int count = 0;
-            for (int i = 0; i < player.Cards.Count; i++)
-            {
-                CardSnapshot candidate = player.Cards[i];
-                if (candidate.CardId == cardId)
-                {
-                    count++;
-                }
-            }
-
-            return count;
+            return true;
         }
 
         private static bool CanDrawCard(LocalPlayerController local, bool isMyTurn)
