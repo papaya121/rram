@@ -33,7 +33,7 @@ namespace RRaM.Core.UI
         private const float ButtonWidthFactor = 0.82f;
         private const float ContentSafetyPadding = 10f;
         private const float DiceOverlayWidth = 700f;
-        private const float DiceOverlayHeight = 132f;
+        private const float DiceOverlayHeight = 188f;
         private const float ChatLogHeight = 130f;
         private const string PortPrefKey = "RRaM.Network.Port";
         private const string FixedRemoteAddress = "45.144.176.193";
@@ -163,21 +163,25 @@ namespace RRaM.Core.UI
                     DrawWrappedLabel("Адрес: localhost");
                 }
 
-                GUILayout.BeginHorizontal();
-                GUILayout.Label("Порт", GUILayout.Width(70f));
-                port = GUILayout.TextField(port, GUILayout.Width(GetContentWidth() - 74f));
-                GUILayout.EndHorizontal();
 
                 bool allowHostStart = connectionTarget == ConnectionTarget.Localhost;
+
+                if (allowHostStart)
+                {
+                    GUILayout.BeginHorizontal();
+                    GUILayout.Label("Порт", GUILayout.Width(70f));
+                    port = GUILayout.TextField(port, GUILayout.Width(GetContentWidth() - 74f));
+                    GUILayout.EndHorizontal();
+                }
                 GUI.enabled = allowHostStart;
-                if (DrawCenteredButton("Запустить Host"))
+                if (allowHostStart && DrawCenteredButton("Запустить Host"))
                 {
                     ApplyConnectionSettings();
                     NetworkManager.singleton.StartHost();
                 }
 
                 GUI.enabled = true;
-                if (DrawCenteredButton("Подключить Client"))
+                if (DrawCenteredButton(allowHostStart ? "Подключить Client" : "Подключиться"))
                 {
                     ApplyConnectionSettings();
                     NetworkManager.singleton.StartClient();
@@ -324,6 +328,7 @@ namespace RRaM.Core.UI
 
             if (canSeeRolledDice)
             {
+                DrawWrappedLabel(DescribeDicePointCounter(turnManager, diceManager, localPlayerSlot));
                 DrawWrappedLabel($"Неиспользованных действий кубиков: {turnManager.GetRemainingDieActions(localPlayerSlot)}");
 
                 if (turnManager.GetRemainingCardTransfers(localPlayerSlot) > 0)
@@ -399,8 +404,9 @@ namespace RRaM.Core.UI
         {
             MatchManager matchManager = MatchManager.Instance;
             DiceManager diceManager = DiceManager.Instance;
+            TurnManager turnManager = TurnManager.Instance;
             LocalPlayerController local = LocalPlayerController.Instance;
-            if (matchManager == null || diceManager == null || local?.Player == null)
+            if (matchManager == null || diceManager == null || turnManager == null || local?.Player == null)
             {
                 return;
             }
@@ -442,11 +448,20 @@ namespace RRaM.Core.UI
                 fontStyle = FontStyle.Bold
             };
 
+            GUIStyle detailStyle = new(GUI.skin.label)
+            {
+                alignment = TextAnchor.MiddleCenter,
+                fontSize = Mathf.RoundToInt(18f * overlayScale),
+                wordWrap = true
+            };
+
             GUI.Box(overlayRect, GUIContent.none, boxStyle);
             GUILayout.BeginArea(overlayRect);
             GUILayout.Space(10f);
             GUILayout.Label("Публичный бросок кубиков", titleStyle);
             GUILayout.Label(DescribeDice(diceManager, localPlayerSlot), valueStyle);
+            GUILayout.Label(DescribeSetupTurnCounter(turnManager, localPlayerSlot), detailStyle);
+            GUILayout.Label(DescribeDicePointCounter(turnManager, diceManager, localPlayerSlot), detailStyle);
             GUILayout.EndArea();
         }
 
@@ -869,6 +884,40 @@ namespace RRaM.Core.UI
             return $"Вы: {diceManager.GetDieA(localPlayerSlot)} + {diceManager.GetDieB(localPlayerSlot)} = {diceManager.GetTotal(localPlayerSlot)}";
         }
 
+        private static string DescribeSetupTurnCounter(TurnManager turnManager, int localPlayerSlot)
+        {
+            if (turnManager == null)
+            {
+                return "Стартовые ходы: нет данных.";
+            }
+
+            int totalSetupTurns = Mathf.Max(0, turnManager.SetupTurnsPerPlayer);
+            if (totalSetupTurns <= 0)
+            {
+                return "Стартовые ходы: 0/0.";
+            }
+
+            int opponentSlot = localPlayerSlot == 0 ? 1 : 0;
+            int completedLocalTurns = turnManager.GetCompletedSetupTurns(localPlayerSlot);
+            int completedOpponentTurns = turnManager.GetCompletedSetupTurns(opponentSlot);
+            string prefix = turnManager.IsSetupPhase ? "Стартовые ходы" : "Стартовые ходы завершены";
+            return $"{prefix}: вы {completedLocalTurns}/{totalSetupTurns}, соперник {completedOpponentTurns}/{totalSetupTurns}.";
+        }
+
+        private static string DescribeDicePointCounter(TurnManager turnManager, DiceManager diceManager, int localPlayerSlot)
+        {
+            if (turnManager == null || diceManager == null || !diceManager.HasRolledThisTurn(localPlayerSlot))
+            {
+                return "Остаток кубиков: нет броска.";
+            }
+
+            int remainingA = turnManager.GetRemainingDieAPoints(localPlayerSlot);
+            int remainingB = turnManager.GetRemainingDieBPoints(localPlayerSlot);
+            int spentA = turnManager.GetSpentDieAPoints(localPlayerSlot);
+            int spentB = turnManager.GetSpentDieBPoints(localPlayerSlot);
+            return $"Осталось на кубиках: {remainingA} и {remainingB}. Потрачено: {spentA} и {spentB}.";
+        }
+
         private static string DescribeSelectedCharacter(NetworkPlayerConnection player)
         {
             if (player == null || player.SelectedCharacterNetId == 0)
@@ -942,7 +991,7 @@ namespace RRaM.Core.UI
                 return "Стартовая подготовка завершена.";
             }
 
-            return $"Стартовые ходы до выхода дварфов: {turnManager.GetRemainingSetupTurns(localPlayerSlot)}.";
+            return $"Стартовые ходы: {turnManager.GetCompletedSetupTurns(localPlayerSlot)}/{turnManager.SetupTurnsPerPlayer}, осталось {turnManager.GetRemainingSetupTurns(localPlayerSlot)}.";
         }
 
         private static string GetTurnWord(int value)

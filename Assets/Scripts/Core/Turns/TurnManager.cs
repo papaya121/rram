@@ -14,6 +14,10 @@ namespace RRaM.Core.Turns
     {
         public sealed class SyncDeckNodeIdSet : SyncHashSet<string> { }
 
+        private const int NoDieMask = 0;
+        private const int DieAMask = 1;
+        private const int DieBMask = 2;
+
         public static TurnManager Instance { get; private set; }
 
         [SyncVar] public TurnMode CurrentMode = TurnMode.Setup;
@@ -31,6 +35,10 @@ namespace RRaM.Core.Turns
         [SyncVar] public int ActiveActionPlayerSlot = -1;
         [SyncVar] public uint ActiveCharacterNetId;
         [SyncVar] public int LastConsumedDieValue;
+        [SyncVar] public int RemainingDieAPoints;
+        [SyncVar] public int RemainingDieBPoints;
+        [SyncVar] private int activeMovementDieMask;
+        [SyncVar] private int activeCardTransferDieMask;
         [SyncVar] public int SetupTurnsPerPlayer;
         [SyncVar] private int playerZeroSetupTurnsCompleted;
         [SyncVar] private int playerOneSetupTurnsCompleted;
@@ -54,6 +62,14 @@ namespace RRaM.Core.Turns
         [SyncVar] private uint playerOneSetupActiveCharacterNetId;
         [SyncVar] private int playerZeroSetupLastConsumedDieValue;
         [SyncVar] private int playerOneSetupLastConsumedDieValue;
+        [SyncVar] private int playerZeroSetupRemainingDieAPoints;
+        [SyncVar] private int playerOneSetupRemainingDieAPoints;
+        [SyncVar] private int playerZeroSetupRemainingDieBPoints;
+        [SyncVar] private int playerOneSetupRemainingDieBPoints;
+        [SyncVar] private int playerZeroSetupActiveMovementDieMask;
+        [SyncVar] private int playerOneSetupActiveMovementDieMask;
+        [SyncVar] private int playerZeroSetupActiveCardTransferDieMask;
+        [SyncVar] private int playerOneSetupActiveCardTransferDieMask;
 
         public event Action<int> ServerTurnCompleted;
 
@@ -78,6 +94,10 @@ namespace RRaM.Core.Turns
             public bool HasMovedThisTurn;
             public uint ActiveCharacterNetId;
             public int LastConsumedDieValue;
+            public int RemainingDieAPoints;
+            public int RemainingDieBPoints;
+            public int ActiveMovementDieMask;
+            public int ActiveCardTransferDieMask;
         }
 
         private void Awake()
@@ -124,6 +144,16 @@ namespace RRaM.Core.Turns
             CurrentPhase = TurnPhase.WaitingForRoll;
             ActiveCharacterNetId = 0;
             RemainingMovePoints = 0;
+            RemainingDieActions = 0;
+            DieAAvailable = false;
+            DieBAvailable = false;
+            RemainingCardTransfers = 0;
+            HasMovedThisTurn = false;
+            LastConsumedDieValue = 0;
+            RemainingDieAPoints = 0;
+            RemainingDieBPoints = 0;
+            activeMovementDieMask = NoDieMask;
+            activeCardTransferDieMask = NoDieMask;
             drawnDeckNodeIdsThisTurn.Clear();
             playerZeroSetupDrawnDeckNodeIdsThisTurn.Clear();
             playerOneSetupDrawnDeckNodeIdsThisTurn.Clear();
@@ -155,6 +185,10 @@ namespace RRaM.Core.Turns
             ActiveActionPlayerSlot = -1;
             ActiveCharacterNetId = 0;
             LastConsumedDieValue = 0;
+            RemainingDieAPoints = 0;
+            RemainingDieBPoints = 0;
+            activeMovementDieMask = NoDieMask;
+            activeCardTransferDieMask = NoDieMask;
             SetupTurnsPerPlayer = 0;
             playerZeroSetupTurnsCompleted = 0;
             playerOneSetupTurnsCompleted = 0;
@@ -189,8 +223,8 @@ namespace RRaM.Core.Turns
                 TurnActionState state = LoadActionState(player.PlayerSlot);
                 state.DieAAvailable = true;
                 state.DieBAvailable = true;
+                ResetRolledDieCounters(player.PlayerSlot, ref state);
                 RefreshRemainingDieActions(ref state);
-                state.RemainingCardTransfers = 0;
                 state.RemainingMovePoints = ResolveAvailableMoveBudget(player.PlayerSlot, state);
                 state.Phase = TurnPhase.WaitingForMove;
                 SaveActionState(player.PlayerSlot, state);
@@ -203,12 +237,14 @@ namespace RRaM.Core.Turns
                 ActiveActionPlayerSlot = player.PlayerSlot;
             }
 
-            DieAAvailable = true;
-            DieBAvailable = true;
-            RefreshRemainingDieActions();
-            RemainingCardTransfers = 0;
-            RemainingMovePoints = ResolveAvailableMoveBudget(CurrentPlayerSlot, LoadActionState(CurrentPlayerSlot));
-            CurrentPhase = TurnPhase.WaitingForMove;
+            TurnActionState activeState = LoadActionState(player.PlayerSlot);
+            activeState.DieAAvailable = true;
+            activeState.DieBAvailable = true;
+            ResetRolledDieCounters(player.PlayerSlot, ref activeState);
+            RefreshRemainingDieActions(ref activeState);
+            activeState.RemainingMovePoints = ResolveAvailableMoveBudget(player.PlayerSlot, activeState);
+            activeState.Phase = TurnPhase.WaitingForMove;
+            SaveActionState(player.PlayerSlot, activeState);
         }
 
         /// <summary>
@@ -291,6 +327,30 @@ namespace RRaM.Core.Turns
             return Mathf.Max(0, LoadActionState(playerSlot).RemainingDieActions);
         }
 
+        public int GetRemainingDieAPoints(int playerSlot)
+        {
+            return Mathf.Max(0, LoadActionState(playerSlot).RemainingDieAPoints);
+        }
+
+        public int GetRemainingDieBPoints(int playerSlot)
+        {
+            return Mathf.Max(0, LoadActionState(playerSlot).RemainingDieBPoints);
+        }
+
+        public int GetSpentDieAPoints(int playerSlot)
+        {
+            return Dice.DiceManager.Instance != null && Dice.DiceManager.Instance.HasRolledThisTurn(playerSlot)
+                ? Mathf.Max(0, Dice.DiceManager.Instance.GetDieA(playerSlot) - GetRemainingDieAPoints(playerSlot))
+                : 0;
+        }
+
+        public int GetSpentDieBPoints(int playerSlot)
+        {
+            return Dice.DiceManager.Instance != null && Dice.DiceManager.Instance.HasRolledThisTurn(playerSlot)
+                ? Mathf.Max(0, Dice.DiceManager.Instance.GetDieB(playerSlot) - GetRemainingDieBPoints(playerSlot))
+                : 0;
+        }
+
         /// <summary>
         /// Returns how many card transfers remain from the currently spent transfer die.
         /// </summary>
@@ -360,16 +420,17 @@ namespace RRaM.Core.Turns
                 return false;
             }
 
-            state.RemainingCardTransfers = 0;
+            ClearCardTransferState(ref state);
             state.LastConsumedDieValue = 0;
             for (int i = 0; i < amount; i++)
             {
-                if (!TryConsumeAvailableDie(playerSlot, ref state, DieConsumptionPreference.Smallest, out int dieValue))
+                if (!TryConsumeAvailableDie(playerSlot, ref state, DieConsumptionPreference.Smallest, out int dieValue, out int dieMask))
                 {
                     return false;
                 }
 
                 state.LastConsumedDieValue += dieValue;
+                SetRemainingDiePoints(ref state, dieMask, 0);
             }
 
             ApplyPostDieConsumptionState(playerSlot, ref state);
@@ -386,13 +447,14 @@ namespace RRaM.Core.Turns
             }
 
             TurnActionState state = LoadActionState(playerSlot);
-            state.RemainingCardTransfers = 0;
-            if (!TryConsumeAvailableDieAtLeast(playerSlot, ref state, Mathf.Max(1, minimumDieValue), out int dieValue))
+            ClearCardTransferState(ref state);
+            if (!TryConsumeAvailableDieAtLeast(playerSlot, ref state, Mathf.Max(1, minimumDieValue), out int dieValue, out int dieMask))
             {
                 return false;
             }
 
             state.LastConsumedDieValue = dieValue;
+            SetRemainingDiePoints(ref state, dieMask, 0);
             ApplyPostDieConsumptionState(playerSlot, ref state);
             SaveActionState(playerSlot, state);
             return true;
@@ -426,21 +488,36 @@ namespace RRaM.Core.Turns
             if (state.RemainingCardTransfers <= 0)
             {
                 if (!CanPlayerSpendDieAction(playerSlot) ||
-                    !TryConsumeAvailableDie(playerSlot, ref state, DieConsumptionPreference.Largest, out int dieValue))
+                    !TryConsumeAvailableDie(playerSlot, ref state, DieConsumptionPreference.Largest, out int dieValue, out int dieMask))
                 {
                     return false;
                 }
 
                 state.LastConsumedDieValue = dieValue;
+                state.ActiveCardTransferDieMask = dieMask;
                 state.RemainingCardTransfers = Mathf.Max(0, dieValue);
+                SetRemainingDiePoints(ref state, dieMask, state.RemainingCardTransfers);
                 RefreshRemainingDieActions(ref state);
-                state.RemainingMovePoints = !state.HasMovedThisTurn ? ResolveAvailableMoveBudget(playerSlot, state) : 0;
+                if (!state.HasMovedThisTurn)
+                {
+                    state.RemainingMovePoints = ResolveAvailableMoveBudget(playerSlot, state);
+                }
+                else
+                {
+                    ClearMovementRemainder(ref state);
+                }
             }
 
             state.RemainingCardTransfers = Mathf.Max(0, state.RemainingCardTransfers - 1);
+            SetRemainingDiePoints(ref state, state.ActiveCardTransferDieMask, state.RemainingCardTransfers);
+            if (state.RemainingCardTransfers <= 0)
+            {
+                state.ActiveCardTransferDieMask = NoDieMask;
+            }
+
             if (state.RemainingDieActions <= 0 && state.RemainingCardTransfers <= 0)
             {
-                state.RemainingMovePoints = 0;
+                ClearMovementRemainder(ref state);
                 state.Phase = TurnPhase.WaitingForEndTurn;
             }
 
@@ -533,30 +610,40 @@ namespace RRaM.Core.Turns
                 return false;
             }
 
-            state.RemainingCardTransfers = 0;
+            ClearCardTransferState(ref state);
             if (state.HasMovedThisTurn)
             {
+                SpendMovementDiePoints(ref state, usedSteps);
                 state.RemainingMovePoints = Mathf.Max(0, state.RemainingMovePoints - usedSteps);
             }
-            else if (TryConsumeMovementDie(playerSlot, ref state, usedSteps, out int dieValue))
+            else if (TryConsumeMovementDie(playerSlot, ref state, usedSteps, out int dieValue, out int dieMask))
             {
                 state.LastConsumedDieValue = dieValue;
+                state.ActiveMovementDieMask = dieMask;
+                SpendMovementDiePoints(ref state, usedSteps);
                 state.RemainingMovePoints = Mathf.Max(0, dieValue + state.MoveBonus - usedSteps);
             }
             else
             {
                 int diceTotal = GetAvailableDiceTotal(playerSlot, state);
+                int movementDieMask = GetAvailableDieMask(state);
                 if (usedSteps > diceTotal + state.MoveBonus || !TryConsumeAllAvailableDice(ref state))
                 {
                     return false;
                 }
 
                 state.LastConsumedDieValue = diceTotal;
+                state.ActiveMovementDieMask = movementDieMask;
+                SpendMovementDiePoints(ref state, usedSteps);
                 state.RemainingMovePoints = Mathf.Max(0, diceTotal + state.MoveBonus - usedSteps);
                 RefreshRemainingDieActions(ref state);
             }
 
             state.HasMovedThisTurn = true;
+            if (state.RemainingMovePoints <= 0)
+            {
+                ClearMovementRemainder(ref state);
+            }
 
             if (state.RemainingMovePoints <= 0 && state.RemainingDieActions <= 0)
             {
@@ -590,6 +677,10 @@ namespace RRaM.Core.Turns
             HasMovedThisTurn = false;
             ActiveCharacterNetId = 0;
             LastConsumedDieValue = 0;
+            RemainingDieAPoints = 0;
+            RemainingDieBPoints = 0;
+            activeMovementDieMask = NoDieMask;
+            activeCardTransferDieMask = NoDieMask;
             drawnDeckNodeIdsThisTurn.Clear();
             playerZeroSetupDrawnDeckNodeIdsThisTurn.Clear();
             playerOneSetupDrawnDeckNodeIdsThisTurn.Clear();
@@ -672,6 +763,10 @@ namespace RRaM.Core.Turns
                 HasMovedThisTurn = false;
                 ActiveCharacterNetId = 0;
                 LastConsumedDieValue = 0;
+                RemainingDieAPoints = 0;
+                RemainingDieBPoints = 0;
+                activeMovementDieMask = NoDieMask;
+                activeCardTransferDieMask = NoDieMask;
             }
 
             CurrentPhase = CurrentMode == TurnMode.Setup && setupFinishedAfterEnd
@@ -704,6 +799,11 @@ namespace RRaM.Core.Turns
         public int GetRemainingSetupTurns(int playerSlot)
         {
             return Mathf.Max(0, SetupTurnsPerPlayer - GetSetupTurnsCompleted(playerSlot));
+        }
+
+        public int GetCompletedSetupTurns(int playerSlot)
+        {
+            return Mathf.Clamp(GetSetupTurnsCompleted(playerSlot), 0, Mathf.Max(0, SetupTurnsPerPlayer));
         }
 
         public int GetTotalRemainingSetupTurns()
@@ -868,7 +968,11 @@ namespace RRaM.Core.Turns
                     RemainingCardTransfers = RemainingCardTransfers,
                     HasMovedThisTurn = HasMovedThisTurn,
                     ActiveCharacterNetId = ActiveCharacterNetId,
-                    LastConsumedDieValue = LastConsumedDieValue
+                    LastConsumedDieValue = LastConsumedDieValue,
+                    RemainingDieAPoints = RemainingDieAPoints,
+                    RemainingDieBPoints = RemainingDieBPoints,
+                    ActiveMovementDieMask = activeMovementDieMask,
+                    ActiveCardTransferDieMask = activeCardTransferDieMask
                 };
             }
 
@@ -885,7 +989,11 @@ namespace RRaM.Core.Turns
                     RemainingCardTransfers = playerZeroSetupRemainingCardTransfers,
                     HasMovedThisTurn = playerZeroSetupHasMoved,
                     ActiveCharacterNetId = playerZeroSetupActiveCharacterNetId,
-                    LastConsumedDieValue = playerZeroSetupLastConsumedDieValue
+                    LastConsumedDieValue = playerZeroSetupLastConsumedDieValue,
+                    RemainingDieAPoints = playerZeroSetupRemainingDieAPoints,
+                    RemainingDieBPoints = playerZeroSetupRemainingDieBPoints,
+                    ActiveMovementDieMask = playerZeroSetupActiveMovementDieMask,
+                    ActiveCardTransferDieMask = playerZeroSetupActiveCardTransferDieMask
                 },
                 1 => new TurnActionState
                 {
@@ -898,7 +1006,11 @@ namespace RRaM.Core.Turns
                     RemainingCardTransfers = playerOneSetupRemainingCardTransfers,
                     HasMovedThisTurn = playerOneSetupHasMoved,
                     ActiveCharacterNetId = playerOneSetupActiveCharacterNetId,
-                    LastConsumedDieValue = playerOneSetupLastConsumedDieValue
+                    LastConsumedDieValue = playerOneSetupLastConsumedDieValue,
+                    RemainingDieAPoints = playerOneSetupRemainingDieAPoints,
+                    RemainingDieBPoints = playerOneSetupRemainingDieBPoints,
+                    ActiveMovementDieMask = playerOneSetupActiveMovementDieMask,
+                    ActiveCardTransferDieMask = playerOneSetupActiveCardTransferDieMask
                 },
                 _ => new TurnActionState { Phase = TurnPhase.WaitingForRoll }
             };
@@ -919,6 +1031,10 @@ namespace RRaM.Core.Turns
                 HasMovedThisTurn = state.HasMovedThisTurn;
                 ActiveCharacterNetId = state.ActiveCharacterNetId;
                 LastConsumedDieValue = state.LastConsumedDieValue;
+                RemainingDieAPoints = state.RemainingDieAPoints;
+                RemainingDieBPoints = state.RemainingDieBPoints;
+                activeMovementDieMask = state.ActiveMovementDieMask;
+                activeCardTransferDieMask = state.ActiveCardTransferDieMask;
                 return;
             }
 
@@ -935,6 +1051,10 @@ namespace RRaM.Core.Turns
                     playerZeroSetupHasMoved = state.HasMovedThisTurn;
                     playerZeroSetupActiveCharacterNetId = state.ActiveCharacterNetId;
                     playerZeroSetupLastConsumedDieValue = state.LastConsumedDieValue;
+                    playerZeroSetupRemainingDieAPoints = state.RemainingDieAPoints;
+                    playerZeroSetupRemainingDieBPoints = state.RemainingDieBPoints;
+                    playerZeroSetupActiveMovementDieMask = state.ActiveMovementDieMask;
+                    playerZeroSetupActiveCardTransferDieMask = state.ActiveCardTransferDieMask;
                     break;
                 case 1:
                     playerOneSetupPhase = state.Phase;
@@ -947,6 +1067,10 @@ namespace RRaM.Core.Turns
                     playerOneSetupHasMoved = state.HasMovedThisTurn;
                     playerOneSetupActiveCharacterNetId = state.ActiveCharacterNetId;
                     playerOneSetupLastConsumedDieValue = state.LastConsumedDieValue;
+                    playerOneSetupRemainingDieAPoints = state.RemainingDieAPoints;
+                    playerOneSetupRemainingDieBPoints = state.RemainingDieBPoints;
+                    playerOneSetupActiveMovementDieMask = state.ActiveMovementDieMask;
+                    playerOneSetupActiveCardTransferDieMask = state.ActiveCardTransferDieMask;
                     break;
             }
         }
@@ -980,6 +1104,14 @@ namespace RRaM.Core.Turns
             playerOneSetupActiveCharacterNetId = 0;
             playerZeroSetupLastConsumedDieValue = 0;
             playerOneSetupLastConsumedDieValue = 0;
+            playerZeroSetupRemainingDieAPoints = 0;
+            playerOneSetupRemainingDieAPoints = 0;
+            playerZeroSetupRemainingDieBPoints = 0;
+            playerOneSetupRemainingDieBPoints = 0;
+            playerZeroSetupActiveMovementDieMask = NoDieMask;
+            playerOneSetupActiveMovementDieMask = NoDieMask;
+            playerZeroSetupActiveCardTransferDieMask = NoDieMask;
+            playerOneSetupActiveCardTransferDieMask = NoDieMask;
         }
 
         private int ResolveAvailableMoveBudget(int playerSlot, TurnActionState state)
@@ -1047,9 +1179,10 @@ namespace RRaM.Core.Turns
                    (state.DieBAvailable && usedSteps <= Dice.DiceManager.Instance.GetDieB(playerSlot) + state.MoveBonus);
         }
 
-        private bool TryConsumeMovementDie(int playerSlot, ref TurnActionState state, int usedSteps, out int dieValue)
+        private bool TryConsumeMovementDie(int playerSlot, ref TurnActionState state, int usedSteps, out int dieValue, out int dieMask)
         {
             dieValue = 0;
+            dieMask = NoDieMask;
             if (Dice.DiceManager.Instance == null)
             {
                 return false;
@@ -1065,12 +1198,14 @@ namespace RRaM.Core.Turns
             if (canUseA && (!canUseB || Dice.DiceManager.Instance.GetDieA(playerSlot) <= Dice.DiceManager.Instance.GetDieB(playerSlot)))
             {
                 dieValue = Dice.DiceManager.Instance.GetDieA(playerSlot);
+                dieMask = DieAMask;
                 state.DieAAvailable = false;
                 RefreshRemainingDieActions(ref state);
                 return true;
             }
 
             dieValue = Dice.DiceManager.Instance.GetDieB(playerSlot);
+            dieMask = DieBMask;
             state.DieBAvailable = false;
             RefreshRemainingDieActions(ref state);
             return true;
@@ -1094,9 +1229,10 @@ namespace RRaM.Core.Turns
             Largest
         }
 
-        private bool TryConsumeAvailableDie(int playerSlot, ref TurnActionState state, DieConsumptionPreference preference, out int dieValue)
+        private bool TryConsumeAvailableDie(int playerSlot, ref TurnActionState state, DieConsumptionPreference preference, out int dieValue, out int dieMask)
         {
             dieValue = 0;
+            dieMask = NoDieMask;
             if (Dice.DiceManager.Instance == null || state.RemainingDieActions <= 0)
             {
                 return false;
@@ -1117,6 +1253,7 @@ namespace RRaM.Core.Turns
             if (useA && state.DieAAvailable)
             {
                 dieValue = Dice.DiceManager.Instance.GetDieA(playerSlot);
+                dieMask = DieAMask;
                 state.DieAAvailable = false;
                 RefreshRemainingDieActions(ref state);
                 return true;
@@ -1128,6 +1265,7 @@ namespace RRaM.Core.Turns
             }
 
             dieValue = Dice.DiceManager.Instance.GetDieB(playerSlot);
+            dieMask = DieBMask;
             state.DieBAvailable = false;
             RefreshRemainingDieActions(ref state);
             return true;
@@ -1144,9 +1282,10 @@ namespace RRaM.Core.Turns
                    (state.DieBAvailable && Dice.DiceManager.Instance.GetDieB(playerSlot) >= minimumDieValue);
         }
 
-        private bool TryConsumeAvailableDieAtLeast(int playerSlot, ref TurnActionState state, int minimumDieValue, out int dieValue)
+        private bool TryConsumeAvailableDieAtLeast(int playerSlot, ref TurnActionState state, int minimumDieValue, out int dieValue, out int dieMask)
         {
             dieValue = 0;
+            dieMask = NoDieMask;
             if (Dice.DiceManager.Instance == null || state.RemainingDieActions <= 0)
             {
                 return false;
@@ -1162,12 +1301,14 @@ namespace RRaM.Core.Turns
             if (canUseA && (!canUseB || Dice.DiceManager.Instance.GetDieA(playerSlot) <= Dice.DiceManager.Instance.GetDieB(playerSlot)))
             {
                 dieValue = Dice.DiceManager.Instance.GetDieA(playerSlot);
+                dieMask = DieAMask;
                 state.DieAAvailable = false;
                 RefreshRemainingDieActions(ref state);
                 return true;
             }
 
             dieValue = Dice.DiceManager.Instance.GetDieB(playerSlot);
+            dieMask = DieBMask;
             state.DieBAvailable = false;
             RefreshRemainingDieActions(ref state);
             return true;
@@ -1183,12 +1324,132 @@ namespace RRaM.Core.Turns
             state.RemainingDieActions = (state.DieAAvailable ? 1 : 0) + (state.DieBAvailable ? 1 : 0);
         }
 
+        private void ResetRolledDieCounters(int playerSlot, ref TurnActionState state)
+        {
+            state.RemainingDieAPoints = Dice.DiceManager.Instance != null ? Dice.DiceManager.Instance.GetDieA(playerSlot) : 0;
+            state.RemainingDieBPoints = Dice.DiceManager.Instance != null ? Dice.DiceManager.Instance.GetDieB(playerSlot) : 0;
+            state.RemainingCardTransfers = 0;
+            state.ActiveMovementDieMask = NoDieMask;
+            state.ActiveCardTransferDieMask = NoDieMask;
+            state.LastConsumedDieValue = 0;
+        }
+
+        private static int GetAvailableDieMask(TurnActionState state)
+        {
+            int dieMask = NoDieMask;
+            if (state.DieAAvailable)
+            {
+                dieMask |= DieAMask;
+            }
+
+            if (state.DieBAvailable)
+            {
+                dieMask |= DieBMask;
+            }
+
+            return dieMask;
+        }
+
+        private static void SetRemainingDiePoints(ref TurnActionState state, int dieMask, int remainingPoints)
+        {
+            int normalizedPoints = Mathf.Max(0, remainingPoints);
+            if ((dieMask & DieAMask) != 0)
+            {
+                state.RemainingDieAPoints = normalizedPoints;
+            }
+
+            if ((dieMask & DieBMask) != 0)
+            {
+                state.RemainingDieBPoints = normalizedPoints;
+            }
+        }
+
+        private static void ClearCardTransferState(ref TurnActionState state)
+        {
+            SetRemainingDiePoints(ref state, state.ActiveCardTransferDieMask, 0);
+            state.RemainingCardTransfers = 0;
+            state.ActiveCardTransferDieMask = NoDieMask;
+        }
+
+        private static void ClearMovementRemainder(ref TurnActionState state)
+        {
+            SetRemainingDiePoints(ref state, state.ActiveMovementDieMask, 0);
+            state.RemainingMovePoints = 0;
+            state.ActiveMovementDieMask = NoDieMask;
+        }
+
+        private static void SpendMovementDiePoints(ref TurnActionState state, int usedSteps)
+        {
+            int stepsToSpend = Mathf.Max(0, usedSteps);
+            if (stepsToSpend <= 0 || state.ActiveMovementDieMask == NoDieMask)
+            {
+                return;
+            }
+
+            bool spendBothDice = (state.ActiveMovementDieMask & DieAMask) != 0 &&
+                                 (state.ActiveMovementDieMask & DieBMask) != 0;
+            if (spendBothDice && state.RemainingDieBPoints < state.RemainingDieAPoints)
+            {
+                SpendSingleDiePoints(ref state, DieBMask, ref stepsToSpend);
+                SpendSingleDiePoints(ref state, DieAMask, ref stepsToSpend);
+            }
+            else
+            {
+                SpendSingleDiePoints(ref state, DieAMask, ref stepsToSpend);
+                SpendSingleDiePoints(ref state, DieBMask, ref stepsToSpend);
+            }
+
+            if (GetRemainingMovementDiePoints(state) <= 0)
+            {
+                state.ActiveMovementDieMask = NoDieMask;
+            }
+        }
+
+        private static void SpendSingleDiePoints(ref TurnActionState state, int dieMask, ref int stepsToSpend)
+        {
+            if (stepsToSpend <= 0 || (state.ActiveMovementDieMask & dieMask) == 0)
+            {
+                return;
+            }
+
+            if (dieMask == DieAMask)
+            {
+                int spent = Mathf.Min(state.RemainingDieAPoints, stepsToSpend);
+                state.RemainingDieAPoints = Mathf.Max(0, state.RemainingDieAPoints - spent);
+                stepsToSpend -= spent;
+                return;
+            }
+
+            if (dieMask == DieBMask)
+            {
+                int spent = Mathf.Min(state.RemainingDieBPoints, stepsToSpend);
+                state.RemainingDieBPoints = Mathf.Max(0, state.RemainingDieBPoints - spent);
+                stepsToSpend -= spent;
+            }
+        }
+
+        private static int GetRemainingMovementDiePoints(TurnActionState state)
+        {
+            int remainingPoints = 0;
+            if ((state.ActiveMovementDieMask & DieAMask) != 0)
+            {
+                remainingPoints += state.RemainingDieAPoints;
+            }
+
+            if ((state.ActiveMovementDieMask & DieBMask) != 0)
+            {
+                remainingPoints += state.RemainingDieBPoints;
+            }
+
+            return remainingPoints;
+        }
+
         private void ApplyPostDieConsumptionState(int playerSlot, ref TurnActionState state)
         {
             RefreshRemainingDieActions(ref state);
             if (state.RemainingDieActions <= 0)
             {
-                state.RemainingMovePoints = 0;
+                ClearMovementRemainder(ref state);
                 state.Phase = TurnPhase.WaitingForEndTurn;
             }
             else if (!state.HasMovedThisTurn)
@@ -1197,7 +1458,7 @@ namespace RRaM.Core.Turns
             }
             else
             {
-                state.RemainingMovePoints = 0;
+                ClearMovementRemainder(ref state);
             }
         }
 
