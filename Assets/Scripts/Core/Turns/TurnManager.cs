@@ -295,23 +295,27 @@ namespace RRaM.Core.Turns
 
         public int GetRemainingMoveBudget(int playerSlot)
         {
-            return Mathf.Max(0, LoadActionState(playerSlot).RemainingMovePoints);
+            TurnActionState state = LoadActionState(playerSlot);
+            return GetAvailableMovementBudget(playerSlot, state);
         }
 
         public int GetCurrentMoveBudget(int playerSlot)
         {
             TurnActionState state = LoadActionState(playerSlot);
             return state.HasMovedThisTurn
-                ? Mathf.Max(0, state.RemainingMovePoints)
+                ? GetAvailableMovementBudget(playerSlot, state)
                 : GetAvailableDiceTotal(playerSlot, state) + state.MoveBonus;
         }
 
         public int GetPrimaryMoveBudget(int playerSlot)
         {
             TurnActionState state = LoadActionState(playerSlot);
-            return state.HasMovedThisTurn
-                ? 0
-                : GetSingleDieMoveBudget(playerSlot, state) + state.MoveBonus;
+            if (state.HasMovedThisTurn)
+            {
+                return Mathf.Max(0, state.RemainingMovePoints);
+            }
+
+            return GetSingleDieMoveBudget(playerSlot, state) + state.MoveBonus;
         }
 
         /// <summary>
@@ -605,7 +609,7 @@ namespace RRaM.Core.Turns
             }
 
             TurnActionState state = LoadActionState(playerSlot);
-            if (usedSteps > state.RemainingMovePoints)
+            if (usedSteps > GetAvailableMovementBudget(playerSlot, state))
             {
                 return false;
             }
@@ -613,10 +617,12 @@ namespace RRaM.Core.Turns
             ClearCardTransferState(ref state);
             if (state.HasMovedThisTurn)
             {
-                SpendMovementDiePoints(ref state, usedSteps);
-                state.RemainingMovePoints = Mathf.Max(0, state.RemainingMovePoints - usedSteps);
+                if (!TrySpendContinuingMovement(playerSlot, ref state, usedSteps))
+                {
+                    return false;
+                }
             }
-            else if (TryConsumeMovementDie(playerSlot, ref state, usedSteps, out int dieValue, out int dieMask))
+            else if (TryConsumeMovementDie(playerSlot, ref state, usedSteps, state.MoveBonus, out int dieValue, out int dieMask))
             {
                 state.LastConsumedDieValue = dieValue;
                 state.ActiveMovementDieMask = dieMask;
@@ -645,7 +651,7 @@ namespace RRaM.Core.Turns
                 ClearMovementRemainder(ref state);
             }
 
-            if (state.RemainingMovePoints <= 0 && state.RemainingDieActions <= 0)
+            if (GetAvailableMovementBudget(playerSlot, state) <= 0 && state.RemainingDieActions <= 0)
             {
                 state.Phase = TurnPhase.WaitingForEndTurn;
                 SaveActionState(playerSlot, state);
@@ -839,7 +845,7 @@ namespace RRaM.Core.Turns
                    Dice.DiceManager.Instance != null &&
                    Dice.DiceManager.Instance.HasRolledThisTurn(playerSlot) &&
                    (state.RemainingDieActions > 0 || state.HasMovedThisTurn) &&
-                   state.RemainingMovePoints > 0;
+                   GetAvailableMovementBudget(playerSlot, state) > 0;
         }
 
         public bool CanPlayerEndTurn(int playerSlot)
@@ -1126,6 +1132,17 @@ namespace RRaM.Core.Turns
                 : GetSingleDieMoveBudget(playerSlot, state) + state.MoveBonus;
         }
 
+        private int GetAvailableMovementBudget(int playerSlot, TurnActionState state)
+        {
+            int budget = Mathf.Max(0, state.RemainingMovePoints);
+            if (state.HasMovedThisTurn)
+            {
+                budget += GetAvailableDiceTotal(playerSlot, state);
+            }
+
+            return budget;
+        }
+
         private int GetSingleDieMoveBudget(int playerSlot, TurnActionState state)
         {
             if (Dice.DiceManager.Instance == null || state.RemainingDieActions <= 0)
@@ -1168,18 +1185,7 @@ namespace RRaM.Core.Turns
             return total;
         }
 
-        private bool CanSingleAvailableDieCoverMovement(int playerSlot, TurnActionState state, int usedSteps)
-        {
-            if (Dice.DiceManager.Instance == null)
-            {
-                return false;
-            }
-
-            return (state.DieAAvailable && usedSteps <= Dice.DiceManager.Instance.GetDieA(playerSlot) + state.MoveBonus) ||
-                   (state.DieBAvailable && usedSteps <= Dice.DiceManager.Instance.GetDieB(playerSlot) + state.MoveBonus);
-        }
-
-        private bool TryConsumeMovementDie(int playerSlot, ref TurnActionState state, int usedSteps, out int dieValue, out int dieMask)
+        private bool TryConsumeMovementDie(int playerSlot, ref TurnActionState state, int usedSteps, int moveBonus, out int dieValue, out int dieMask)
         {
             dieValue = 0;
             dieMask = NoDieMask;
@@ -1188,8 +1194,9 @@ namespace RRaM.Core.Turns
                 return false;
             }
 
-            bool canUseA = state.DieAAvailable && usedSteps <= Dice.DiceManager.Instance.GetDieA(playerSlot) + state.MoveBonus;
-            bool canUseB = state.DieBAvailable && usedSteps <= Dice.DiceManager.Instance.GetDieB(playerSlot) + state.MoveBonus;
+            int bonus = Mathf.Max(0, moveBonus);
+            bool canUseA = state.DieAAvailable && usedSteps <= Dice.DiceManager.Instance.GetDieA(playerSlot) + bonus;
+            bool canUseB = state.DieBAvailable && usedSteps <= Dice.DiceManager.Instance.GetDieB(playerSlot) + bonus;
             if (!canUseA && !canUseB)
             {
                 return false;
@@ -1220,6 +1227,51 @@ namespace RRaM.Core.Turns
 
             state.DieAAvailable = false;
             state.DieBAvailable = false;
+            return true;
+        }
+
+        private bool TrySpendContinuingMovement(int playerSlot, ref TurnActionState state, int usedSteps)
+        {
+            int stepsToSpend = Mathf.Max(0, usedSteps);
+            if (stepsToSpend <= 0)
+            {
+                return false;
+            }
+
+            int activeMovementPoints = Mathf.Min(Mathf.Max(0, state.RemainingMovePoints), stepsToSpend);
+            if (activeMovementPoints > 0)
+            {
+                SpendMovementDiePoints(ref state, activeMovementPoints);
+                state.RemainingMovePoints = Mathf.Max(0, state.RemainingMovePoints - activeMovementPoints);
+                stepsToSpend -= activeMovementPoints;
+            }
+
+            if (stepsToSpend <= 0)
+            {
+                return true;
+            }
+
+            if (TryConsumeMovementDie(playerSlot, ref state, stepsToSpend, 0, out int dieValue, out int dieMask))
+            {
+                state.LastConsumedDieValue = dieValue;
+                state.ActiveMovementDieMask |= dieMask;
+                SpendMovementDiePoints(ref state, stepsToSpend);
+                state.RemainingMovePoints += Mathf.Max(0, dieValue - stepsToSpend);
+                return true;
+            }
+
+            int diceTotal = GetAvailableDiceTotal(playerSlot, state);
+            int movementDieMask = GetAvailableDieMask(state);
+            if (stepsToSpend > diceTotal || !TryConsumeAllAvailableDice(ref state))
+            {
+                return false;
+            }
+
+            state.LastConsumedDieValue = diceTotal;
+            state.ActiveMovementDieMask |= movementDieMask;
+            SpendMovementDiePoints(ref state, stepsToSpend);
+            state.RemainingMovePoints += Mathf.Max(0, diceTotal - stepsToSpend);
+            RefreshRemainingDieActions(ref state);
             return true;
         }
 
